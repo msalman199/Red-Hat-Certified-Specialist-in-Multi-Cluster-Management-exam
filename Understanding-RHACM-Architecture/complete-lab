@@ -1,0 +1,392 @@
+Lab 2: Understanding RHACM Architecture
+Objectives
+By the end of this lab, students will be able to:
+
+Identify and understand the core components of Red Hat Advanced Cluster Management (RHACM)
+Explain the role and functionality of the Hub cluster in a multi-cluster environment
+Understand how managed clusters integrate with the Hub cluster
+Describe the purpose and operation of Klusterlet agents
+Implement and configure placement policies for workload distribution
+Analyze the interaction patterns between RHACM components
+Troubleshoot common RHACM architectural issues
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes concepts (pods, services, deployments)
+Familiarity with OpenShift Container Platform fundamentals
+Knowledge of YAML configuration files
+Experience with command-line interface operations
+Understanding of cluster networking concepts
+Basic knowledge of Kubernetes operators and custom resources
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+Pre-installed OpenShift CLI (oc)
+kubectl command-line tool
+Access to multiple OpenShift clusters
+RHACM operator pre-deployed
+Network connectivity between clusters
+Task 1: Explore RHACM Components - Hub Cluster
+Subtask 1.1: Understanding the Hub Cluster Architecture
+The Hub cluster serves as the central management point for all managed clusters in your RHACM environment. Let's explore its components and functionality.
+
+Step 1: Access the Hub Cluster
+Connect to your Hub cluster using the provided credentials:
+
+# Set the Hub cluster context
+export KUBECONFIG=/home/student/hub-cluster-kubeconfig
+
+# Verify connection to Hub cluster
+oc whoami
+oc cluster-info
+Step 2: Examine RHACM Operator Installation
+Check the RHACM operator installation and its components:
+
+# List RHACM related namespaces
+oc get namespaces | grep -E "(open-cluster-management|multicluster)"
+
+# Check the RHACM operator status
+oc get csv -n open-cluster-management -o wide
+
+# Examine the MultiClusterHub custom resource
+oc get multiclusterhub -n open-cluster-management -o yaml
+Step 3: Explore Hub Cluster Components
+Investigate the core components running on the Hub cluster:
+
+# List all pods in the open-cluster-management namespace
+oc get pods -n open-cluster-management
+
+# Check the cluster-manager deployment
+oc describe deployment cluster-manager -n open-cluster-management
+
+# Examine the application lifecycle components
+oc get pods -n open-cluster-management-addon-manager
+Subtask 1.2: Analyzing Hub Cluster Services
+Step 4: Examine Core Services
+# List services in the RHACM namespace
+oc get services -n open-cluster-management
+
+# Check the multicluster-observability-operator
+oc get deployment multicluster-observability-operator -n open-cluster-management -o yaml
+
+# Examine the policy framework components
+oc get pods -l app=governance-policy-framework -n open-cluster-management
+Step 5: Understanding Custom Resource Definitions
+# List RHACM-specific CRDs
+oc get crd | grep cluster.open-cluster-management.io
+
+# Examine the ManagedCluster CRD
+oc describe crd managedclusters.cluster.open-cluster-management.io
+
+# Check PlacementRule CRD
+oc describe crd placementrules.apps.open-cluster-management.io
+Task 2: Explore Managed Clusters
+Subtask 2.1: Understanding Managed Cluster Registration
+Step 6: View Registered Managed Clusters
+# List all managed clusters
+oc get managedclusters
+
+# Get detailed information about a specific managed cluster
+oc describe managedcluster <cluster-name>
+
+# Check the status of managed clusters
+oc get managedclusters -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[0].type,AVAILABLE:.status.conditions[0].status
+Step 7: Examine Managed Cluster Configuration
+# View the managed cluster YAML configuration
+oc get managedcluster <cluster-name> -o yaml
+
+# Check cluster labels and annotations
+oc get managedcluster <cluster-name> -o jsonpath='{.metadata.labels}' | jq
+
+# Examine cluster capabilities
+oc get managedcluster <cluster-name> -o jsonpath='{.status.clusterClaims}' | jq
+Subtask 2.2: Managed Cluster Namespace Analysis
+Step 8: Explore Managed Cluster Namespaces
+# List namespaces created for each managed cluster
+oc get namespaces | grep -E "^cluster-"
+
+# Examine a specific managed cluster namespace
+oc describe namespace <cluster-name>
+
+# Check resources in the managed cluster namespace
+oc get all -n <cluster-name>
+Task 3: Understanding Klusterlet Components
+Subtask 3.1: Klusterlet Agent Analysis
+Step 9: Connect to a Managed Cluster
+Switch context to examine Klusterlet components on a managed cluster:
+
+# Set the managed cluster context
+export KUBECONFIG=/home/student/managed-cluster-kubeconfig
+
+# Verify connection to managed cluster
+oc whoami
+oc get nodes
+Step 10: Examine Klusterlet Installation
+# Check the open-cluster-management-agent namespace
+oc get namespaces | grep open-cluster-management-agent
+
+# List Klusterlet pods
+oc get pods -n open-cluster-management-agent
+
+# Examine the Klusterlet custom resource
+oc get klusterlet -o yaml
+Step 11: Analyze Klusterlet Components
+# Check the registration agent
+oc describe deployment klusterlet-registration-agent -n open-cluster-management-agent
+
+# Examine the work agent
+oc describe deployment klusterlet-work-agent -n open-cluster-management-agent
+
+# View Klusterlet configuration
+oc get configmap -n open-cluster-management-agent
+Subtask 3.2: Klusterlet Communication Analysis
+Step 12: Understanding Agent Communication
+# Check the bootstrap secret
+oc get secret -n open-cluster-management-agent | grep bootstrap
+
+# Examine the hub cluster connection configuration
+oc describe secret hub-kubeconfig-secret -n open-cluster-management-agent
+
+# View registration status
+oc get csr | grep <cluster-name>
+Task 4: Implementing and Understanding Placement
+Subtask 4.1: Creating Placement Policies
+Step 13: Switch Back to Hub Cluster
+# Return to Hub cluster context
+export KUBECONFIG=/home/student/hub-cluster-kubeconfig
+
+# Verify Hub cluster connection
+oc whoami
+Step 14: Create a Basic Placement Policy
+Create a placement policy to understand how workloads are distributed:
+
+# Create a namespace for our placement examples
+oc create namespace placement-demo
+
+# Create a basic placement policy
+cat << EOF | oc apply -f -
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: demo-placement
+  namespace: placement-demo
+spec:
+  numberOfClusters: 2
+  clusterSets:
+  - default
+EOF
+Step 15: Examine Placement Results
+# Check the placement status
+oc get placement demo-placement -n placement-demo -o yaml
+
+# View placement decisions
+oc get placementdecision -n placement-demo
+
+# Examine detailed placement decision
+oc describe placementdecision -n placement-demo
+Subtask 4.2: Advanced Placement Configuration
+Step 16: Create Label-Based Placement
+# Create a placement with cluster label selectors
+cat << EOF | oc apply -f -
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: production-placement
+  namespace: placement-demo
+spec:
+  numberOfClusters: 1
+  clusterSets:
+  - default
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchLabels:
+          environment: production
+EOF
+Step 17: Test Placement with Cluster Labels
+# Add labels to a managed cluster
+oc label managedcluster <cluster-name> environment=production
+
+# Check the updated placement decision
+oc get placementdecision -n placement-demo -o yaml
+
+# Verify cluster selection
+oc describe placement production-placement -n placement-demo
+Subtask 4.3: Understanding Placement Binding
+Step 18: Create a PlacementBinding
+# Create a sample application for placement binding
+cat << EOF | oc apply -f -
+apiVersion: apps.open-cluster-management.io/v1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: placement-demo
+spec:
+  componentKinds:
+  - group: apps.open-cluster-management.io/v1
+    kind: Subscription
+  descriptor: {}
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - demo-app
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: demo-app-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+EOF
+Step 19: Verify Application Placement
+# Check application status
+oc get application demo-app -n placement-demo -o yaml
+
+# Examine placement rule status
+oc describe placementrule demo-app-placement -n placement-demo
+
+# View application distribution
+oc get subscription -A | grep demo-app
+Task 5: Component Interaction Analysis
+Subtask 5.1: Monitoring Component Communication
+Step 20: Analyze Hub-to-Managed Cluster Communication
+# Check ManifestWork resources
+oc get manifestwork -A
+
+# Examine a specific ManifestWork
+oc describe manifestwork -n <cluster-name>
+
+# View work agent status on managed cluster
+export KUBECONFIG=/home/student/managed-cluster-kubeconfig
+oc get pods -n open-cluster-management-agent -l app=klusterlet-work-agent
+Step 21: Monitor Cluster Health Status
+# Return to Hub cluster
+export KUBECONFIG=/home/student/hub-cluster-kubeconfig
+
+# Check cluster health conditions
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status
+
+# Examine detailed cluster status
+oc get managedcluster <cluster-name> -o jsonpath='{.status.conditions}' | jq
+Subtask 5.2: Understanding Add-on Management
+Step 22: Explore Managed Cluster Add-ons
+# List available add-ons
+oc get clustermanagementaddon
+
+# Check add-on status on managed clusters
+oc get managedclusteraddon -A
+
+# Examine a specific add-on configuration
+oc describe managedclusteraddon application-manager -n <cluster-name>
+Troubleshooting Common Issues
+Common Issue 1: Managed Cluster Not Joining
+If a managed cluster shows as "Unknown" or fails to join:
+
+# Check Klusterlet status on managed cluster
+export KUBECONFIG=/home/student/managed-cluster-kubeconfig
+oc get klusterlet -o yaml
+
+# Verify bootstrap secret
+oc get secret -n open-cluster-management-agent | grep bootstrap
+
+# Check registration agent logs
+oc logs deployment/klusterlet-registration-agent -n open-cluster-management-agent
+Common Issue 2: Placement Not Working
+If placement policies don't select expected clusters:
+
+# Verify cluster labels
+oc get managedclusters --show-labels
+
+# Check placement conditions
+oc describe placement <placement-name> -n <namespace>
+
+# Examine cluster set membership
+oc get managedclusterset default -o yaml
+Common Issue 3: Add-on Installation Failures
+If add-ons fail to install on managed clusters:
+
+# Check add-on status
+oc get managedclusteraddon -A
+
+# Examine add-on logs
+oc logs -n open-cluster-management deployment/<addon-name>-controller
+
+# Verify add-on configuration
+oc describe clustermanagementaddon <addon-name>
+Verification and Testing
+Final Verification Steps
+Step 23: Complete Architecture Verification
+# Create a comprehensive status check script
+cat << 'EOF' > rhacm-status-check.sh
+#!/bin/bash
+
+echo "=== RHACM Architecture Status Check ==="
+echo
+
+echo "1. Hub Cluster Components:"
+oc get pods -n open-cluster-management --no-headers | wc -l
+echo "   Total pods in open-cluster-management namespace: $(oc get pods -n open-cluster-management --no-headers | wc -l)"
+
+echo
+echo "2. Managed Clusters:"
+oc get managedclusters --no-headers | wc -l
+echo "   Total managed clusters: $(oc get managedclusters --no-headers | wc -l)"
+oc get managedclusters -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[0].type,AVAILABLE:.status.conditions[0].status --no-headers
+
+echo
+echo "3. Placement Policies:"
+oc get placement -A --no-headers | wc -l
+echo "   Total placement policies: $(oc get placement -A --no-headers | wc -l)"
+
+echo
+echo "4. Add-ons Status:"
+oc get managedclusteraddon -A --no-headers | wc -l
+echo "   Total add-ons deployed: $(oc get managedclusteraddon -A --no-headers | wc -l)"
+
+echo
+echo "=== Status Check Complete ==="
+EOF
+
+chmod +x rhacm-status-check.sh
+./rhacm-status-check.sh
+Conclusion
+In this comprehensive lab, you have successfully explored and understood the core architecture of Red Hat Advanced Cluster Management (RHACM). Here's what you accomplished:
+
+Key Learning Achievements:
+
+Hub Cluster Mastery: You explored the central Hub cluster components, understanding how it serves as the control plane for multi-cluster management, including the cluster-manager, policy framework, and application lifecycle management components.
+
+Managed Cluster Integration: You learned how managed clusters register with the Hub cluster, examined their namespace organization, and understood the relationship between Hub and managed clusters.
+
+Klusterlet Agent Understanding: You analyzed the Klusterlet components running on managed clusters, including registration and work agents, and understood how they facilitate communication with the Hub cluster.
+
+Placement Policy Implementation: You created and tested various placement policies, learning how to distribute workloads across clusters based on labels, cluster sets, and other criteria.
+
+Component Interaction Analysis: You examined how different RHACM components interact, including ManifestWork distribution, add-on management, and cluster health monitoring.
+
+Why This Matters:
+
+Understanding RHACM architecture is crucial for:
+
+Enterprise Scale Management: Managing multiple Kubernetes clusters efficiently across different environments
+Compliance and Governance: Implementing consistent policies across all managed clusters
+Application Lifecycle Management: Deploying and managing applications across multiple clusters
+Observability and Monitoring: Maintaining visibility into the health and performance of distributed clusters
+Disaster Recovery: Implementing robust backup and recovery strategies across multiple clusters
+Next Steps:
+
+With this foundational understanding of RHACM architecture, you're now prepared to:
+
+Implement advanced governance policies
+Configure application deployment strategies
+Set up observability and monitoring solutions
+Design disaster recovery procedures
+Prepare for the Red Hat Certified Specialist in Multi Cluster Management exam
+This knowledge forms the foundation for advanced multi-cluster management scenarios and prepares you for real-world enterprise Kubernetes deployments using RHACM.
