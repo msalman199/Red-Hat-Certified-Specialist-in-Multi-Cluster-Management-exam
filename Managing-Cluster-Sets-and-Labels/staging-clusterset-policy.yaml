@@ -1,0 +1,61 @@
+# Create file: staging-clusterset-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: staging-monitoring-policy
+  namespace: cluster-policies
+  annotations:
+    policy.open-cluster-management.io/standards: Custom
+    policy.open-cluster-management.io/categories: Monitoring
+    policy.open-cluster-management.io/controls: MON-1
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: staging-monitoring-config
+        spec:
+          remediationAction: enforce
+          severity: medium
+          namespaceSelector:
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: monitoring-config
+                  namespace: default
+                data:
+                  environment: "staging"
+                  monitoring.enabled: "true"
+                  log.level: "debug"
+                  metrics.retention: "7d"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: staging-clusterset-placement
+  namespace: cluster-policies
+spec:
+  clusterSets:
+    - staging
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: staging-monitoring-policy-binding
+  namespace: cluster-policies
+placementRef:
+  name: staging-clusterset-placement
+  kind: Placement
+  apiGroup: cluster.open-cluster-management.io
+subjects:
+  - name: staging-monitoring-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io

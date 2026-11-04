@@ -1,0 +1,600 @@
+Lab 5: Managing Cluster Sets and Labels
+Objectives
+By the end of this lab, you will be able to:
+
+Understand the concept of cluster sets and labels in multi-cluster management
+Create and configure cluster sets using Red Hat Advanced Cluster Management (RHACM)
+Apply labels to clusters for better organization and policy targeting
+Assign and manage policies based on cluster sets and labels
+Implement governance policies across multiple clusters using set-based targeting
+Troubleshoot common issues with cluster set management
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes concepts (pods, services, deployments)
+Familiarity with YAML configuration files
+Knowledge of Red Hat OpenShift Container Platform fundamentals
+Experience with command-line interface operations
+Understanding of policy-based management concepts
+Completion of previous labs in the multi-cluster management series
+Required Knowledge Areas
+Kubernetes Cluster Administration: Understanding of cluster operations and management
+YAML Syntax: Ability to read and write YAML configuration files
+Policy Management: Basic understanding of governance and compliance policies
+Label Selectors: Knowledge of how Kubernetes uses labels for resource selection
+Lab Environment Setup
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines for this lab. Simply click Start Lab to access your environment. No need to build your own virtual machines or install additional software.
+
+Environment Details
+Your lab environment includes:
+
+Hub Cluster: Red Hat Advanced Cluster Management hub cluster
+Managed Clusters: Three managed OpenShift clusters (dev, staging, prod)
+Pre-installed Tools: oc CLI, kubectl, and RHACM components
+Network Configuration: All clusters are properly networked and accessible
+Task 1: Create Cluster Sets and Apply Labels
+Subtask 1.1: Understanding Cluster Sets
+Cluster sets are logical groupings of clusters that allow you to organize and manage multiple clusters as a single unit. They provide:
+
+Isolation: Separate cluster groups for different teams or environments
+Policy Targeting: Apply policies to specific cluster groups
+Resource Management: Manage resources across related clusters
+Access Control: Control who can access which cluster groups
+Subtask 1.2: Examine Current Cluster Configuration
+First, let's examine the current state of our managed clusters.
+
+Access the Hub Cluster
+# Switch to the hub cluster context
+oc config use-context hub-cluster
+
+# Verify you're connected to the hub cluster
+oc whoami --show-server
+List All Managed Clusters
+# View all managed clusters
+oc get managedclusters
+
+# Get detailed information about managed clusters
+oc get managedclusters -o wide
+Check Current Labels on Clusters
+# View labels on all managed clusters
+oc get managedclusters --show-labels
+
+# Examine specific cluster details
+oc describe managedcluster dev-cluster
+oc describe managedcluster staging-cluster
+oc describe managedcluster prod-cluster
+Subtask 1.3: Create Cluster Sets
+Now we'll create cluster sets to organize our clusters logically.
+
+Create Development Cluster Set
+# Create file: dev-clusterset.yaml
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: development
+spec:
+  clusterSelector:
+    selectorType: ExclusiveClusterSetLabel
+# Apply the development cluster set
+oc apply -f dev-clusterset.yaml
+
+# Verify the cluster set was created
+oc get managedclustersets
+Create Production Cluster Set
+# Create file: prod-clusterset.yaml
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: production
+spec:
+  clusterSelector:
+    selectorType: ExclusiveClusterSetLabel
+# Apply the production cluster set
+oc apply -f prod-clusterset.yaml
+Create Staging Cluster Set
+# Create file: staging-clusterset.yaml
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: staging
+spec:
+  clusterSelector:
+    selectorType: ExclusiveClusterSetLabel
+# Apply the staging cluster set
+oc apply -f staging-clusterset.yaml
+
+# List all cluster sets
+oc get managedclustersets
+Subtask 1.4: Apply Labels to Clusters
+Labels help categorize and select clusters for various operations.
+
+Apply Environment Labels
+# Label the development cluster
+oc label managedcluster dev-cluster environment=development
+
+# Label the staging cluster
+oc label managedcluster staging-cluster environment=staging
+
+# Label the production cluster
+oc label managedcluster prod-cluster environment=production
+Apply Additional Organizational Labels
+# Add region labels
+oc label managedcluster dev-cluster region=us-east
+oc label managedcluster staging-cluster region=us-west
+oc label managedcluster prod-cluster region=us-central
+
+# Add team ownership labels
+oc label managedcluster dev-cluster team=backend-dev
+oc label managedcluster staging-cluster team=qa-testing
+oc label managedcluster prod-cluster team=platform-ops
+
+# Add criticality labels
+oc label managedcluster dev-cluster criticality=low
+oc label managedcluster staging-cluster criticality=medium
+oc label managedcluster prod-cluster criticality=high
+Apply Cluster Set Labels
+# Assign clusters to their respective cluster sets
+oc label managedcluster dev-cluster cluster.open-cluster-management.io/clusterset=development
+oc label managedcluster staging-cluster cluster.open-cluster-management.io/clusterset=staging
+oc label managedcluster prod-cluster cluster.open-cluster-management.io/clusterset=production
+Subtask 1.5: Verify Cluster Set Assignments
+Check Cluster Set Memberships
+# View cluster set bindings
+oc get managedclustersetbinding -A
+
+# Check which clusters belong to each set
+oc get managedclusters -l cluster.open-cluster-management.io/clusterset=development
+oc get managedclusters -l cluster.open-cluster-management.io/clusterset=staging
+oc get managedclusters -l cluster.open-cluster-management.io/clusterset=production
+Verify All Labels
+# Display all labels for each cluster
+oc get managedclusters --show-labels
+
+# Get detailed label information
+oc describe managedcluster dev-cluster | grep Labels -A 10
+oc describe managedcluster staging-cluster | grep Labels -A 10
+oc describe managedcluster prod-cluster | grep Labels -A 10
+Task 2: Assign Policies Based on Sets and Labels
+Subtask 2.1: Understanding Policy Targeting
+Policies in RHACM can be targeted to clusters using:
+
+Cluster Sets: Target all clusters in a specific set
+Label Selectors: Target clusters with specific labels
+Cluster Names: Target specific clusters by name
+Combined Selectors: Use multiple criteria for precise targeting
+Subtask 2.2: Create Namespace for Policies
+Create Policy Namespace
+# Create namespace for our policies
+oc create namespace cluster-policies
+
+# Verify namespace creation
+oc get namespace cluster-policies
+Subtask 2.3: Create Development Environment Policy
+This policy will apply security configurations to development clusters.
+
+Create Development Security Policy
+# Create file: dev-security-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: dev-security-policy
+  namespace: cluster-policies
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.AC Identity Management Authentication and Access Control
+    policy.open-cluster-management.io/controls: PR.AC-4
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: dev-network-policy
+        spec:
+          remediationAction: enforce
+          severity: medium
+          namespaceSelector:
+            exclude:
+              - kube-*
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: deny-all-ingress
+                  namespace: default
+                spec:
+                  podSelector: {}
+                  policyTypes:
+                    - Ingress
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: dev-security-policy-binding
+  namespace: cluster-policies
+placementRef:
+  name: dev-placement
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: dev-security-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: dev-placement
+  namespace: cluster-policies
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: development
+# Apply the development security policy
+oc apply -f dev-security-policy.yaml
+
+# Verify policy creation
+oc get policy -n cluster-policies
+oc get placementrule -n cluster-policies
+oc get placementbinding -n cluster-policies
+Subtask 2.4: Create Production Environment Policy
+This policy will apply stricter security configurations to production clusters.
+
+Create Production Security Policy
+# Create file: prod-security-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: prod-security-policy
+  namespace: cluster-policies
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.AC Identity Management Authentication and Access Control
+    policy.open-cluster-management.io/controls: PR.AC-1,PR.AC-4
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: prod-pod-security-policy
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            exclude:
+              - kube-*
+              - openshift-*
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: LimitRange
+                metadata:
+                  name: prod-resource-limits
+                  namespace: default
+                spec:
+                  limits:
+                    - default:
+                        cpu: "500m"
+                        memory: "512Mi"
+                      defaultRequest:
+                        cpu: "100m"
+                        memory: "128Mi"
+                      type: Container
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: prod-network-policy
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            exclude:
+              - kube-*
+              - openshift-*
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: strict-network-policy
+                  namespace: default
+                spec:
+                  podSelector: {}
+                  policyTypes:
+                    - Ingress
+                    - Egress
+                  ingress: []
+                  egress:
+                    - to:
+                        - namespaceSelector:
+                            matchLabels:
+                              name: kube-system
+                      ports:
+                        - protocol: TCP
+                          port: 53
+                        - protocol: UDP
+                          port: 53
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: prod-security-policy-binding
+  namespace: cluster-policies
+placementRef:
+  name: prod-placement
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: prod-security-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: prod-placement
+  namespace: cluster-policies
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      criticality: high
+# Apply the production security policy
+oc apply -f prod-security-policy.yaml
+Subtask 2.5: Create Cluster Set-Based Policy
+This policy will target all clusters in the staging cluster set.
+
+Create Staging Cluster Set Policy
+# Create file: staging-clusterset-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: staging-monitoring-policy
+  namespace: cluster-policies
+  annotations:
+    policy.open-cluster-management.io/standards: Custom
+    policy.open-cluster-management.io/categories: Monitoring
+    policy.open-cluster-management.io/controls: MON-1
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: staging-monitoring-config
+        spec:
+          remediationAction: enforce
+          severity: medium
+          namespaceSelector:
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: monitoring-config
+                  namespace: default
+                data:
+                  environment: "staging"
+                  monitoring.enabled: "true"
+                  log.level: "debug"
+                  metrics.retention: "7d"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: staging-clusterset-placement
+  namespace: cluster-policies
+spec:
+  clusterSets:
+    - staging
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: staging-monitoring-policy-binding
+  namespace: cluster-policies
+placementRef:
+  name: staging-clusterset-placement
+  kind: Placement
+  apiGroup: cluster.open-cluster-management.io
+subjects:
+  - name: staging-monitoring-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+# Apply the staging cluster set policy
+oc apply -f staging-clusterset-policy.yaml
+
+# Verify all policies are created
+oc get policy -n cluster-policies
+oc get placement -n cluster-policies
+oc get placementrule -n cluster-policies
+Subtask 2.6: Create Multi-Label Selector Policy
+This policy demonstrates complex label-based targeting.
+
+Create Regional Compliance Policy
+# Create file: regional-compliance-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: us-east-compliance-policy
+  namespace: cluster-policies
+  annotations:
+    policy.open-cluster-management.io/standards: SOC2
+    policy.open-cluster-management.io/categories: Compliance
+    policy.open-cluster-management.io/controls: CC6.1
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: regional-compliance-config
+        spec:
+          remediationAction: inform
+          severity: low
+          namespaceSelector:
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: compliance-config
+                  namespace: default
+                data:
+                  region: "us-east"
+                  compliance.framework: "SOC2"
+                  audit.enabled: "true"
+                  data.retention: "2555d"  # 7 years
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-east-placement
+  namespace: cluster-policies
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-east
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: us-east-compliance-policy-binding
+  namespace: cluster-policies
+placementRef:
+  name: us-east-placement
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: us-east-compliance-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+# Apply the regional compliance policy
+oc apply -f regional-compliance-policy.yaml
+Subtask 2.7: Verify Policy Deployment and Compliance
+Check Policy Status
+# View all policies and their status
+oc get policy -n cluster-policies
+
+# Get detailed policy information
+oc describe policy dev-security-policy -n cluster-policies
+oc describe policy prod-security-policy -n cluster-policies
+oc describe policy staging-monitoring-policy -n cluster-policies
+Check Policy Compliance
+# View policy compliance status
+oc get policy -n cluster-policies -o custom-columns=NAME:.metadata.name,COMPLIANCE:.status.compliant
+
+# Check specific policy details
+oc get policy dev-security-policy -n cluster-policies -o yaml | grep -A 20 status
+Verify Placement Results
+# Check placement rule decisions
+oc get placementrule -n cluster-policies -o wide
+
+# Check placement decisions
+oc get placement -n cluster-policies -o wide
+
+# View detailed placement information
+oc describe placementrule dev-placement -n cluster-policies
+oc describe placement staging-clusterset-placement -n cluster-policies
+Subtask 2.8: Monitor Policy Violations and Remediation
+Check for Policy Violations
+# View policy violations across all clusters
+oc get policy -n cluster-policies --show-labels
+
+# Check specific cluster compliance
+oc get managedclusters -o custom-columns=NAME:.metadata.name,LABELS:.metadata.labels
+View Policy Events
+# Check events related to policies
+oc get events -n cluster-policies --sort-by='.lastTimestamp'
+
+# View policy-specific events
+oc describe policy prod-security-policy -n cluster-policies | grep -A 10 Events
+Advanced Configuration and Troubleshooting
+Common Issues and Solutions
+Policy Not Applying to Expected Clusters
+# Debug placement rules
+oc get placementrule -n cluster-policies -o yaml
+
+# Check cluster labels
+oc get managedclusters --show-labels
+
+# Verify cluster set assignments
+oc get managedclusters -l cluster.open-cluster-management.io/clusterset=development
+Cluster Set Binding Issues
+# Check cluster set bindings
+oc get managedclustersetbinding -A
+
+# Verify cluster set permissions
+oc describe managedclusterset development
+Policy Compliance Issues
+# Check policy template status
+oc get configurationpolicy -A
+
+# View detailed compliance information
+oc describe policy <policy-name> -n cluster-policies
+Best Practices for Cluster Sets and Labels
+Naming Conventions
+
+Use consistent naming patterns for cluster sets
+Apply meaningful labels that reflect organizational structure
+Use hierarchical labeling (environment, region, team)
+Policy Organization
+
+Group related policies in dedicated namespaces
+Use descriptive policy names and annotations
+Implement proper RBAC for policy management
+Monitoring and Maintenance
+
+Regularly review cluster set memberships
+Monitor policy compliance across all clusters
+Update labels as organizational needs change
+Conclusion
+In this lab, you have successfully:
+
+Created and configured cluster sets to logically organize your managed clusters into development, staging, and production groups
+Applied comprehensive labels to clusters including environment, region, team, and criticality classifications
+Implemented targeted policies using various selection methods including label selectors, cluster sets, and combined criteria
+Deployed security and compliance policies with different enforcement levels appropriate for each environment
+Verified policy deployment and compliance across your multi-cluster environment
+Key Accomplishments
+Cluster Organization: You've established a structured approach to managing multiple clusters using sets and labels, making it easier to apply policies and manage resources at scale.
+
+Policy Targeting: You've learned how to precisely target policies to specific clusters or groups of clusters using multiple selection criteria, ensuring that the right policies are applied to the right environments.
+
+Compliance Management: You've implemented a governance framework that can enforce different security and compliance requirements based on cluster characteristics and organizational needs.
+
+Why This Matters
+Scalability: As organizations grow their Kubernetes footprint, the ability to manage clusters in groups becomes essential for operational efficiency.
+
+Governance: Proper cluster organization and policy targeting enables consistent security and compliance across diverse environments.
+
+Operational Excellence: Using cluster sets and labels provides a foundation for automated operations, monitoring, and incident response across your multi-cluster infrastructure.
+
+This knowledge prepares you for the Red Hat Certified Specialist in Multi Cluster Management exam and provides practical skills for managing enterprise-scale Kubernetes deployments in production environments.
