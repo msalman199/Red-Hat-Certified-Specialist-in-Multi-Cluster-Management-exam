@@ -1,0 +1,30 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredSecurityContext
+metadata:
+  name: must-have-security-context
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 2000
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredResourceLimits
+metadata:
+  name: must-have-resource-limits
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    cpu: "500m"
+    memory: "512Mi"

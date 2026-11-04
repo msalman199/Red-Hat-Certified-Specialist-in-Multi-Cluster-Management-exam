@@ -1,0 +1,13 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sCertificatePolicy
+metadata:
+  name: certificate-governance-policy
+spec:
+  match:
+    kinds:
+      - apiGroups: ["cert-manager.io"]
+        kinds: ["Certificate"]
+  parameters:
+    minValidityDays: 30
+    maxValidityDays: 365
+    requiredIssuer: "selfsigned-cluster-issuer"

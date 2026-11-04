@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: test-certificate
+  namespace: default
+spec:
+  secretName: test-certificate-secret
+  duration: 8760h
+  renewBefore: 720h
+  issuerRef:
+    name: selfsigned-cluster-issuer
+    kind: ClusterIssuer
+  dnsNames:
+  - test.example.com
+  - www.test.example.com

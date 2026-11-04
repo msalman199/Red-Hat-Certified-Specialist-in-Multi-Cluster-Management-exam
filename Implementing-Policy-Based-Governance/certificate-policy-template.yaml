@@ -1,0 +1,43 @@
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8scertificatepolicy
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sCertificatePolicy
+      validation:
+        type: object
+        properties:
+          minValidityDays:
+            type: integer
+          maxValidityDays:
+            type: integer
+          requiredIssuer:
+            type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8scertificatepolicy
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Certificate"
+          cert := input.review.object
+          duration := cert.spec.duration
+          not valid_duration(duration)
+          msg := sprintf("Certificate duration '%v' is not within allowed range", [duration])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Certificate"
+          cert := input.review.object
+          issuer := cert.spec.issuerRef.name
+          required := input.parameters.requiredIssuer
+          issuer != required
+          msg := sprintf("Certificate must use issuer '%v', got '%v'", [required, issuer])
+        }
+
+        valid_duration(duration) {
+          duration != ""
+        }

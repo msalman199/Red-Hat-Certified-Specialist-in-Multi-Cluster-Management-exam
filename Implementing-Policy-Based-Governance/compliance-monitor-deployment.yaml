@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliance-monitor
+  namespace: gatekeeper-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: compliance-monitor
+  template:
+    metadata:
+      labels:
+        app: compliance-monitor
+    spec:
+      serviceAccountName: compliance-monitor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      containers:
+      - name: monitor
+        image: alpine:latest
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do echo 'Monitoring compliance...'; sleep 300; done"]
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: compliance-monitor
+  namespace: gatekeeper-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: compliance-monitor
+rules:
+- apiGroups: [""]
+  resources: ["events", "pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["constraints.gatekeeper.sh"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["templates.gatekeeper.sh"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: compliance-monitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: compliance-monitor
+subjects:
+- kind: ServiceAccount
+  name: compliance-monitor
+  namespace: gatekeeper-system

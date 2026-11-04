@@ -1,0 +1,7 @@
+=== Multi-Cluster Compliance Validation Report ===
+Generated at: Wed Nov  4 04:22:44 UTC 2026
+
+=== Cluster: cluster-1 ===
+ERROR: Cannot switch to cluster cluster-1
+=== Cluster: cluster-2 ===
+ERROR: Cannot switch to cluster cluster-2

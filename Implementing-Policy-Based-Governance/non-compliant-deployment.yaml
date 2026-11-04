@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: non-compliant-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: non-compliant-app
+  template:
+    metadata:
+      labels:
+        app: non-compliant-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
