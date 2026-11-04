@@ -1,0 +1,30 @@
+# cluster-template.yaml
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: managed-cluster-01
+  namespace: managed-cluster-01
+  labels:
+    cloud: AWS
+    region: us-east-1
+    vendor: OpenShift
+spec:
+  baseDomain: example.com
+  clusterName: managed-cluster-01
+  controlPlaneConfig:
+    servingCertificates: {}
+  installed: false
+  platform:
+    aws:
+      credentialsSecretRef:
+        name: aws-provider-connection
+      region: us-east-1
+  provisioning:
+    installConfigSecretRef:
+      name: managed-cluster-01-install-config
+    sshPrivateKeySecretRef:
+      name: managed-cluster-01-ssh-private-key
+    imageSetRef:
+      name: img4.12.0-x86-64-appsub
+  pullSecretRef:
+    name: managed-cluster-01-pull-secret

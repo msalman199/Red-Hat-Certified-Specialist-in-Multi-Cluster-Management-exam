@@ -1,0 +1,10 @@
+# cluster-set-template.yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: ManagedClusterSet
+metadata:
+  name: production-clusters
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      region: us-east-1

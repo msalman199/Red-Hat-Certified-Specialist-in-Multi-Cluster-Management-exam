@@ -1,0 +1,18 @@
+# machine-pool.yaml
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: worker-pool-2
+  namespace: managed-cluster-01
+spec:
+  clusterDeploymentRef:
+    name: managed-cluster-01
+  name: worker-pool-2
+  platform:
+    aws:
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      type: m5.2xlarge
+  replicas: 3

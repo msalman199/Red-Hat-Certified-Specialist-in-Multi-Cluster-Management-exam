@@ -1,0 +1,22 @@
+# klusterlet-addon-config.yaml
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: managed-cluster-01
+  namespace: managed-cluster-01
+spec:
+  clusterName: managed-cluster-01
+  clusterNamespace: managed-cluster-01
+  clusterLabels:
+    cloud: Amazon
+    vendor: OpenShift
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+  iamPolicyController:
+    enabled: true

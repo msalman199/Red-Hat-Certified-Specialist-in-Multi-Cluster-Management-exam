@@ -1,0 +1,443 @@
+Lab 4: Creating and Provisioning New Clusters
+Objectives
+By the end of this lab, students will be able to:
+
+Understand the fundamentals of Red Hat Advanced Cluster Management (RHACM) cluster provisioning
+Create and configure automation templates for cluster deployment
+Provision new OpenShift clusters using RHACM automation templates
+Validate cluster creation and deployment status
+Troubleshoot common cluster provisioning issues
+Implement best practices for multi-cluster management
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes and OpenShift concepts
+Familiarity with YAML configuration files
+Knowledge of container orchestration principles
+Experience with command-line interface operations
+Understanding of cloud infrastructure concepts
+Completion of previous RHACM labs or equivalent experience
+Required Knowledge Areas
+OpenShift cluster architecture
+RHACM hub and managed cluster concepts
+Infrastructure providers (AWS, Azure, GCP, VMware)
+Network and security fundamentals
+Git repository management
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment. No need to build your own virtual machines or install software.
+
+Pre-installed Components
+Your lab environment includes:
+
+Red Hat Advanced Cluster Management Hub cluster
+OpenShift CLI (oc) tools
+Git client
+Text editors (vim, nano)
+Network connectivity to cloud providers
+Task 1: Understanding RHACM Cluster Provisioning
+Subtask 1.1: Explore RHACM Console
+Access the RHACM Console
+
+Open your web browser and navigate to the RHACM console URL provided in your lab environment.
+
+# Get the RHACM console URL
+oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}'
+Login to RHACM Console
+
+Use the credentials provided in your lab environment to log in.
+
+Navigate to Infrastructure Section
+
+Click on Infrastructure in the left navigation menu
+Select Clusters to view the cluster management interface
+Observe the hub cluster and any existing managed clusters
+Subtask 1.2: Review Cluster Lifecycle Management
+Examine Cluster States
+
+Understanding cluster lifecycle states is crucial for effective management:
+
+Creating: Cluster provisioning is in progress
+Ready: Cluster is successfully provisioned and available
+Offline: Cluster is not responding
+Detached: Cluster connection is lost
+Destroying: Cluster is being decommissioned
+Review Provider Connections
+
+Navigate to Infrastructure > Provider connections to see configured cloud providers.
+
+Task 2: Creating Automation Templates
+Subtask 2.1: Create Infrastructure Provider Connection
+Navigate to Provider Connections
+
+In the RHACM console, go to Infrastructure > Provider connections.
+
+Add New Provider Connection
+
+Click Add connection and select your cloud provider. For this lab, we'll use AWS as an example.
+
+Configure AWS Provider Connection
+
+# Example AWS provider connection configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-provider-connection
+  namespace: open-cluster-management
+  labels:
+    cluster.open-cluster-management.io/type: aws
+    cluster.open-cluster-management.io/credentials: ""
+type: Opaque
+data:
+  aws_access_key_id: <base64-encoded-access-key>
+  aws_secret_access_key: <base64-encoded-secret-key>
+  baseDomain: <base64-encoded-base-domain>
+  pullSecret: <base64-encoded-pull-secret>
+  ssh-privatekey: <base64-encoded-ssh-private-key>
+  ssh-publickey: <base64-encoded-ssh-public-key>
+Apply Provider Connection
+
+Save the configuration and verify the connection status.
+
+Subtask 2.2: Create Cluster Template
+Navigate to Cluster Creation
+
+Go to Infrastructure > Clusters and click Create cluster.
+
+Select Infrastructure Provider
+
+Choose Amazon Web Services from the available providers.
+
+Configure Cluster Template
+
+Create a comprehensive cluster template with the following specifications:
+
+# cluster-template.yaml
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: managed-cluster-01
+  namespace: managed-cluster-01
+  labels:
+    cloud: AWS
+    region: us-east-1
+    vendor: OpenShift
+spec:
+  baseDomain: example.com
+  clusterName: managed-cluster-01
+  controlPlaneConfig:
+    servingCertificates: {}
+  installed: false
+  platform:
+    aws:
+      credentialsSecretRef:
+        name: aws-provider-connection
+      region: us-east-1
+  provisioning:
+    installConfigSecretRef:
+      name: managed-cluster-01-install-config
+    sshPrivateKeySecretRef:
+      name: managed-cluster-01-ssh-private-key
+    imageSetRef:
+      name: img4.12.0-x86-64-appsub
+  pullSecretRef:
+    name: managed-cluster-01-pull-secret
+Subtask 2.3: Configure Install Config
+Create Install Configuration
+
+# install-config.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: managed-cluster-01-install-config
+  namespace: managed-cluster-01
+type: Opaque
+data:
+  install-config.yaml: |
+    YXBpVmVyc2lvbjogdjEKbWV0YWRhdGE6CiAgbmFtZTogbWFuYWdlZC1jbHVzdGVyLTAxCmJhc2VEb21haW46IGV4YW1wbGUuY29tCmNvbnRyb2xQbGFuZToKICBoeXBlcnRocmVhZGluZzogRW5hYmxlZAogIGFyY2hpdGVjdHVyZTogYW1kNjQKICBuYW1lOiBtYXN0ZXIKICByZXBsaWNhczogMwogIHBsYXRmb3JtOgogICAgYXdzOgogICAgICByb290Vm9sdW1lOgogICAgICAgIGlvcHM6IDQwMDAKICAgICAgICBzaXplOiAxMDAKICAgICAgICB0eXBlOiBpbzEKICAgICAgdHlwZTogbTUueGxhcmdlCmNvbXB1dGU6Ci0gaHlwZXJ0aHJlYWRpbmc6IEVuYWJsZWQKICBhcmNoaXRlY3R1cmU6IGFtZDY0CiAgbmFtZTogd29ya2VyCiAgcmVwbGljYXM6IDMKICBwbGF0Zm9ybToKICAgIGF3czoKICAgICAgcm9vdFZvbHVtZToKICAgICAgICBpb3BzOiAyMDAwCiAgICAgICAgc2l6ZTogMTAwCiAgICAgICAgdHlwZTogaW8xCiAgICAgIHR5cGU6IG01LmxhcmdlCm5ldHdvcmtpbmc6CiAgbmV0d29ya1R5cGU6IE9wZW5TaGlmdFNETgogIGNsdXN0ZXJOZXR3b3JrOgogIC0gY2lkcjogMTAuMTI4LjAuMC8xNAogICAgaG9zdFByZWZpeDogMjMKICBtYWNoaW5lTmV0d29yazoKICAtIGNpZHI6IDEwLjAuMC4wLzE2CiAgc2VydmljZU5ldHdvcms6CiAgLSAxNzIuMzAuMC4wLzE2CnBsYXRmb3JtOgogIGF3czoKICAgIHJlZ2lvbjogdXMtZWFzdC0xCnB1bGxTZWNyZXQ6ICcnCnNzaEtleTogJyc=
+Task 3: Provisioning New OpenShift Clusters
+Subtask 3.1: Deploy Cluster Using Template
+Create Cluster Namespace
+
+# Create namespace for the new cluster
+oc create namespace managed-cluster-01
+Apply Cluster Configuration
+
+# Apply the cluster deployment configuration
+oc apply -f cluster-template.yaml
+
+# Apply the install configuration
+oc apply -f install-config.yaml
+Create Additional Required Secrets
+
+# Create SSH key secret
+oc create secret generic managed-cluster-01-ssh-private-key \
+  --from-file=ssh-privatekey=/path/to/ssh-key \
+  -n managed-cluster-01
+
+# Create pull secret
+oc create secret generic managed-cluster-01-pull-secret \
+  --from-file=.dockerconfigjson=/path/to/pull-secret.json \
+  --type=kubernetes.io/dockerconfigjson \
+  -n managed-cluster-01
+Subtask 3.2: Monitor Cluster Creation Progress
+Check Cluster Deployment Status
+
+# Monitor cluster deployment
+oc get clusterdeployment managed-cluster-01 -n managed-cluster-01 -w
+
+# Check detailed status
+oc describe clusterdeployment managed-cluster-01 -n managed-cluster-01
+Monitor Installation Logs
+
+# View installation logs
+oc logs -f deployment/hive-controllers -n hive
+
+# Check cluster provision status
+oc get clusterprovision -n managed-cluster-01
+Track Progress in RHACM Console
+
+Navigate to Infrastructure > Clusters
+Locate your cluster managed-cluster-01
+Monitor the status changes from Creating to Ready
+Subtask 3.3: Configure Cluster Import
+Create ManagedCluster Resource
+
+# managed-cluster.yaml
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: managed-cluster-01
+  labels:
+    cloud: Amazon
+    region: us-east-1
+    name: managed-cluster-01
+    cluster.open-cluster-management.io/clusterset: default
+spec:
+  hubAcceptsClient: true
+Apply ManagedCluster Configuration
+
+# Apply managed cluster configuration
+oc apply -f managed-cluster.yaml
+Create Klusterlet Addon Config
+
+# klusterlet-addon-config.yaml
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: managed-cluster-01
+  namespace: managed-cluster-01
+spec:
+  clusterName: managed-cluster-01
+  clusterNamespace: managed-cluster-01
+  clusterLabels:
+    cloud: Amazon
+    vendor: OpenShift
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+  iamPolicyController:
+    enabled: true
+Task 4: Validating Cluster Creation Process
+Subtask 4.1: Verify Cluster Connectivity
+Check Cluster Status
+
+# Verify managed cluster status
+oc get managedclusters
+
+# Check cluster conditions
+oc get managedcluster managed-cluster-01 -o yaml
+Test Cluster Access
+
+# Get cluster credentials
+oc extract secret/managed-cluster-01-admin-kubeconfig -n managed-cluster-01 --to=-
+
+# Test connectivity to managed cluster
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get nodes
+Subtask 4.2: Validate Cluster Components
+Check Core Components
+
+# Verify cluster operators
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get clusteroperators
+
+# Check node status
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get nodes -o wide
+Verify RHACM Agent Installation
+
+# Check klusterlet installation
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get pods -n open-cluster-management-agent
+
+# Verify addon components
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get pods -n open-cluster-management-agent-addon
+Subtask 4.3: Test Cluster Management Features
+Deploy Test Application
+
+# test-app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-nginx
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-nginx
+  template:
+    metadata:
+      labels:
+        app: test-nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+Apply Test Application
+
+# Deploy test application to managed cluster
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig apply -f test-app.yaml
+
+# Verify deployment
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get deployments
+Monitor from RHACM Console
+
+Navigate to Applications in RHACM console
+Verify that the test application is visible
+Check resource utilization and cluster health metrics
+Troubleshooting Common Issues
+Issue 1: Cluster Creation Stuck in Creating State
+Symptoms: Cluster remains in "Creating" state for extended period
+
+Resolution Steps:
+
+# Check cluster provision logs
+oc get clusterprovision -n managed-cluster-01
+oc logs <clusterprovision-pod> -n managed-cluster-01
+
+# Verify provider credentials
+oc get secret aws-provider-connection -n open-cluster-management -o yaml
+
+# Check install config
+oc get secret managed-cluster-01-install-config -n managed-cluster-01 -o yaml
+Issue 2: Managed Cluster Not Joining Hub
+Symptoms: Cluster created but not appearing as managed cluster
+
+Resolution Steps:
+
+# Check managed cluster status
+oc get managedcluster managed-cluster-01
+
+# Verify klusterlet installation
+oc --kubeconfig=/path/to/managed-cluster-kubeconfig get pods -n open-cluster-management-agent
+
+# Check import secret
+oc get secret managed-cluster-01-import -n managed-cluster-01
+Issue 3: Authentication Failures
+Symptoms: Unable to access managed cluster
+
+Resolution Steps:
+
+# Regenerate cluster credentials
+oc get secret managed-cluster-01-admin-kubeconfig -n managed-cluster-01 -o yaml
+
+# Verify cluster API endpoint
+oc get clusterdeployment managed-cluster-01 -n managed-cluster-01 -o jsonpath='{.status.apiURL}'
+
+# Test network connectivity
+curl -k <cluster-api-url>/healthz
+Best Practices for Cluster Provisioning
+Resource Management
+Proper Sizing
+
+Use appropriate instance types for workload requirements
+Configure adequate storage for persistent volumes
+Plan network capacity for expected traffic
+Security Configuration
+
+Implement proper RBAC policies
+Configure network policies
+Enable audit logging
+Monitoring and Alerting
+
+Set up cluster monitoring
+Configure alerting rules
+Implement log aggregation
+Automation and Scaling
+# cluster-set-template.yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: ManagedClusterSet
+metadata:
+  name: production-clusters
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      region: us-east-1
+Advanced Configuration Options
+Custom Machine Pools
+# machine-pool.yaml
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: worker-pool-2
+  namespace: managed-cluster-01
+spec:
+  clusterDeploymentRef:
+    name: managed-cluster-01
+  name: worker-pool-2
+  platform:
+    aws:
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      type: m5.2xlarge
+  replicas: 3
+Network Configuration
+# network-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-network-config
+  namespace: managed-cluster-01
+data:
+  network-config.yaml: |
+    networking:
+      networkType: OVNKubernetes
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      serviceNetwork:
+      - 172.30.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Mastered RHACM Cluster Provisioning: Learned to create and manage OpenShift clusters using Red Hat Advanced Cluster Management automation templates
+Implemented Infrastructure as Code: Created reusable templates for consistent cluster deployment across multiple environments
+Validated Cluster Operations: Performed thorough testing to ensure clusters are properly provisioned and integrated with the RHACM hub
+Developed Troubleshooting Skills: Gained experience identifying and resolving common cluster provisioning issues
+Applied Best Practices: Implemented security, monitoring, and resource management best practices for production environments
+Why This Matters
+Multi-cluster management is essential in modern enterprise environments where organizations need to:
+
+Scale Operations: Manage multiple OpenShift clusters across different regions and cloud providers
+Ensure Consistency: Maintain standardized configurations and policies across all clusters
+Improve Efficiency: Automate cluster lifecycle management to reduce manual overhead
+Enhance Security: Implement centralized governance and compliance across the entire cluster fleet
+Enable Innovation: Provide development teams with self-service cluster provisioning capabilities
+Next Steps
+To further enhance your multi-cluster management skills:
+
+Explore GitOps Integration: Learn to manage cluster configurations using Git repositories
+Implement Policy Management: Create and enforce governance policies across cluster fleets
+Set Up Disaster Recovery: Configure backup and recovery procedures for managed clusters
+Optimize Resource Utilization: Implement cluster autoscaling and resource optimization strategies
+Integrate with CI/CD Pipelines: Automate application deployment across multiple clusters
+This lab provides the foundation for advanced multi-cluster management scenarios and prepares you for the Red Hat Certified Specialist in Multi Cluster Management certification exam.

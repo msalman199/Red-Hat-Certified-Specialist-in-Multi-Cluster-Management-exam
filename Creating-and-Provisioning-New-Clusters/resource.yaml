@@ -1,0 +1,17 @@
+# Example AWS provider connection configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-provider-connection
+  namespace: open-cluster-management
+  labels:
+    cluster.open-cluster-management.io/type: aws
+    cluster.open-cluster-management.io/credentials: ""
+type: Opaque
+data:
+  aws_access_key_id: <base64-encoded-access-key>
+  aws_secret_access_key: <base64-encoded-secret-key>
+  baseDomain: <base64-encoded-base-domain>
+  pullSecret: <base64-encoded-pull-secret>
+  ssh-privatekey: <base64-encoded-ssh-private-key>
+  ssh-publickey: <base64-encoded-ssh-public-key>
