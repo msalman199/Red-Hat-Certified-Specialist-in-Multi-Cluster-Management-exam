@@ -1,0 +1,272 @@
+Lab 1: Installing RHACM on Hub Cluster
+Objectives
+By the end of this lab, you will be able to:
+
+• Install Red Hat Advanced Cluster Management (RHACM) on a hub OpenShift cluster using OperatorHub • Validate the health and status of RHACM components after installation • Verify the installation using both command-line tools and the web dashboard • Navigate the RHACM console and understand its key features • Troubleshoot common installation issues
+
+Prerequisites
+Before starting this lab, you should have:
+
+• Basic understanding of OpenShift Container Platform concepts • Familiarity with Kubernetes fundamentals (pods, services, deployments) • Experience using the oc command-line tool • Knowledge of OpenShift Operators and OperatorHub • Understanding of YAML configuration files • Basic Linux command-line skills
+
+Required Access and Permissions
+• Cluster administrator privileges on the OpenShift hub cluster • Access to the OpenShift web console • Command-line access to the cluster with oc CLI tool installed
+
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment. No need to build your own virtual machine or install additional software.
+
+Your lab environment includes: • OpenShift Container Platform cluster (hub cluster) • Pre-installed oc CLI tool • Web browser access to OpenShift console • All required network connectivity and permissions
+
+Lab Tasks
+Task 1: Prepare the Environment and Access the Hub Cluster
+Subtask 1.1: Verify Cluster Access
+First, let's ensure you have proper access to your OpenShift hub cluster.
+
+Open a terminal in your lab environment
+
+Verify your cluster connection:
+
+oc whoami
+Check cluster status:
+oc get nodes
+Verify you have cluster-admin privileges:
+oc auth can-i '*' '*' --all-namespaces
+Expected output should show yes, confirming administrative access.
+
+Subtask 1.2: Check Cluster Resources
+Before installing RHACM, verify your cluster has sufficient resources.
+
+Check cluster version:
+oc version
+Verify node resources:
+oc describe nodes
+Check available storage classes:
+oc get storageclass
+Note: RHACM requires significant resources. Ensure your cluster has at least 8 CPU cores and 16GB RAM available across nodes.
+
+Task 2: Install RHACM via OperatorHub
+Subtask 2.1: Access OperatorHub in OpenShift Console
+Open your web browser and navigate to the OpenShift console URL provided in your lab environment
+
+Log in using your cluster administrator credentials
+
+In the left navigation menu, click on Operators → OperatorHub
+
+In the search box, type Advanced Cluster Management and press Enter
+
+Click on the Advanced Cluster Management for Kubernetes tile
+
+Subtask 2.2: Install the RHACM Operator
+In the operator details page, click Install
+
+Configure the installation settings: • Installation Mode: Select All namespaces on the cluster • Installed Namespace: Select openshift-operators • Update Channel: Choose release-2.9 (or latest stable version) • Approval Strategy: Select Automatic
+
+Click Install to begin the operator installation
+
+Wait for the installation to complete. You should see a green checkmark and "Succeeded" status.
+
+Subtask 2.3: Verify Operator Installation via CLI
+Return to your terminal and verify the operator installation:
+oc get csv -n openshift-operators | grep advanced-cluster-management
+Check operator pods:
+oc get pods -n openshift-operators | grep advanced-cluster-management
+Verify the operator is running:
+oc get operators
+Task 3: Create MultiClusterHub Instance
+Subtask 3.1: Create the RHACM Namespace
+Create a dedicated namespace for RHACM:
+oc create namespace open-cluster-management
+Verify namespace creation:
+oc get namespace open-cluster-management
+Subtask 3.2: Create MultiClusterHub Custom Resource
+Create a YAML file for the MultiClusterHub configuration:
+cat > multiclusterhub.yaml << EOF
+apiVersion: operator.open-cluster-management.io/v1
+kind: MultiClusterHub
+metadata:
+  name: multiclusterhub
+  namespace: open-cluster-management
+spec:
+  availabilityConfig: High
+  enableClusterBackup: false
+  imagePullSecret: ""
+  separateCertificateManagement: false
+EOF
+Apply the configuration:
+oc apply -f multiclusterhub.yaml
+Monitor the installation progress:
+oc get multiclusterhub -n open-cluster-management -w
+Note: The installation may take 10-15 minutes. Wait until the status shows Running.
+
+Subtask 3.3: Alternative Method - Create via OpenShift Console
+If you prefer using the web console:
+
+Navigate to Operators → Installed Operators
+
+Click on Advanced Cluster Management for Kubernetes
+
+Click on the MultiClusterHub tab
+
+Click Create MultiClusterHub
+
+Use the default configuration or modify as needed
+
+Click Create
+
+Task 4: Validate Component Health
+Subtask 4.1: Check MultiClusterHub Status
+Verify the MultiClusterHub status:
+oc get multiclusterhub -n open-cluster-management
+Get detailed status information:
+oc describe multiclusterhub multiclusterhub -n open-cluster-management
+Check for any error conditions:
+oc get multiclusterhub multiclusterhub -n open-cluster-management -o jsonpath='{.status.conditions}' | jq
+Subtask 4.2: Verify RHACM Pods
+List all pods in the RHACM namespace:
+oc get pods -n open-cluster-management
+Check pod status and ensure all are running:
+oc get pods -n open-cluster-management --field-selector=status.phase!=Running
+If this command returns no results, all pods are running correctly.
+
+Check for any pods with restart counts:
+oc get pods -n open-cluster-management -o wide
+Subtask 4.3: Validate Services and Routes
+Check RHACM services:
+oc get services -n open-cluster-management
+Verify routes are created:
+oc get routes -n open-cluster-management
+Get the RHACM console URL:
+oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}'
+Task 5: Verify Installation with Dashboard Access
+Subtask 5.1: Access RHACM Console
+Get the RHACM console URL:
+echo "https://$(oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}')"
+Open this URL in your web browser
+
+Log in using your OpenShift credentials
+
+You should see the RHACM dashboard with the welcome screen
+
+Subtask 5.2: Explore RHACM Dashboard Features
+Navigate through the main sections: • Overview: Shows cluster summary and status • Infrastructure: Manage clusters and providers • Applications: Application lifecycle management • Governance: Policy and compliance management
+
+Click on Infrastructure → Clusters to see your hub cluster listed
+
+Verify the hub cluster shows as "Ready" status
+
+Subtask 5.3: Validate Installation via CLI Commands
+Check RHACM version:
+oc get multiclusterhub multiclusterhub -n open-cluster-management -o jsonpath='{.status.currentVersion}'
+List all RHACM-related custom resource definitions:
+oc get crd | grep cluster-management
+Verify cluster management add-ons:
+oc get managedclusteraddons -A
+Check the hub cluster registration:
+oc get managedclusters
+You should see your hub cluster listed as "local-cluster".
+
+Task 6: Post-Installation Configuration and Testing
+Subtask 6.1: Configure RBAC (Optional)
+Create a sample user with RHACM access:
+cat > rhacm-user-rbac.yaml << EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rhacm-admin-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: open-cluster-management:cluster-manager-admin
+subjects:
+- kind: User
+  name: rhacm-admin
+  apiGroup: rbac.authorization.k8s.io
+EOF
+Apply the RBAC configuration:
+oc apply -f rhacm-user-rbac.yaml
+Subtask 6.2: Test Basic Functionality
+Create a test namespace to verify RHACM is working:
+oc create namespace rhacm-test
+Label the namespace for RHACM management:
+oc label namespace rhacm-test cluster.open-cluster-management.io/managedCluster=local-cluster
+Verify the label was applied:
+oc get namespace rhacm-test --show-labels
+Clean up the test namespace:
+oc delete namespace rhacm-test
+Troubleshooting Common Issues
+Issue 1: Operator Installation Fails
+Symptoms: Operator shows "Failed" status in OperatorHub
+
+Solution:
+
+# Check operator logs
+oc logs -n openshift-operators deployment/advanced-cluster-management-operator
+
+# Verify subscription status
+oc get subscription -n openshift-operators
+Issue 2: MultiClusterHub Stuck in Pending
+Symptoms: MultiClusterHub remains in "Pending" state
+
+Solution:
+
+# Check events for errors
+oc get events -n open-cluster-management --sort-by='.lastTimestamp'
+
+# Verify resource quotas
+oc describe quota -n open-cluster-management
+Issue 3: Pods Not Starting
+Symptoms: RHACM pods show "Pending" or "CrashLoopBackOff"
+
+Solution:
+
+# Check pod details
+oc describe pod <pod-name> -n open-cluster-management
+
+# Check node resources
+oc top nodes
+
+# Verify storage classes
+oc get pvc -n open-cluster-management
+Issue 4: Console Access Problems
+Symptoms: Cannot access RHACM console
+
+Solution:
+
+# Verify route exists
+oc get route multicloud-console -n open-cluster-management
+
+# Check route status
+oc describe route multicloud-console -n open-cluster-management
+
+# Verify console pod is running
+oc get pods -n open-cluster-management | grep console
+Validation Checklist
+Before completing this lab, ensure the following items are verified:
+
+ RHACM Operator is installed and running
+ MultiClusterHub custom resource is in "Running" status
+ All RHACM pods are in "Running" state with 0 restarts
+ RHACM console is accessible via web browser
+ Hub cluster appears as "local-cluster" in managed clusters
+ No error events in the open-cluster-management namespace
+ All required services and routes are created
+ RHACM version information is displayed correctly
+Conclusion
+Congratulations! You have successfully completed the installation of Red Hat Advanced Cluster Management (RHACM) on your hub OpenShift cluster.
+
+What You Accomplished
+In this lab, you:
+
+• Installed the RHACM Operator from OperatorHub, which provides the foundation for multi-cluster management capabilities • Created a MultiClusterHub instance that serves as the central control plane for managing multiple OpenShift clusters • Validated the installation by checking component health, pod status, and service availability • Verified functionality through both command-line tools and the web-based dashboard • Learned troubleshooting techniques for common installation issues
+
+Why This Matters
+RHACM installation is the critical first step in building a multi-cluster management platform. This foundation enables you to:
+
+• Centrally manage multiple OpenShift clusters from a single hub location • Deploy applications consistently across different environments and clusters • Implement governance policies to ensure compliance and security standards • Monitor cluster health and performance from a unified dashboard • Automate cluster lifecycle management including provisioning and upgrades
+
+Next Steps
+With RHACM successfully installed, you're now ready to:
+
+• Import existing OpenShift clusters as managed clusters • Create new clusters using RHACM cluster provisioning • Deploy multi-cluster applications using GitOps workflows • Implement governance policies across your cluster fleet • Set up observability and monitoring for your multi-cluster environment
+
+The hub cluster you've configured will serve as the command center for all your multi-cluster operations, making it easier to scale and manage your OpenShift infrastructure as your organization grows.
