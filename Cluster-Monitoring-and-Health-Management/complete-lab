@@ -1,0 +1,567 @@
+Lab 6: Cluster Monitoring and Health Management
+Objectives
+By the end of this lab, you will be able to:
+
+Set up comprehensive cluster health monitoring and logging in Red Hat Advanced Cluster Management (RHACM)
+Configure and validate automatic version upgrades for managed OpenShift clusters
+Monitor cluster health status using both RHACM dashboard and CLI commands
+Implement observability components for multi-cluster environments
+Troubleshoot cluster health issues using monitoring data and logs
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of OpenShift Container Platform concepts
+Familiarity with Kubernetes cluster administration
+Knowledge of YAML configuration files
+Experience with command-line interface operations
+Completion of previous RHACM labs (Labs 1-5) or equivalent experience
+Understanding of monitoring and observability concepts
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines for this lab. Simply click Start Lab to access your environment. No need to build your own virtual machines or install software - everything is ready to use!
+
+Your lab environment includes:
+
+RHACM Hub cluster (pre-installed and configured)
+Two managed OpenShift clusters
+Required CLI tools (oc, kubectl, cm)
+Pre-configured network connectivity
+Lab Environment Overview
+Hub Cluster (RHACM)
+├── Managed Cluster 1 (Production)
+├── Managed Cluster 2 (Development)
+└── Observability Components
+Task 1: Set Up Cluster Health Monitoring and Logging
+Subtask 1.1: Enable Observability in RHACM
+First, we'll enable the observability service in RHACM to collect metrics and logs from managed clusters.
+
+Access the RHACM Hub Cluster
+# Login to the hub cluster
+oc login -u admin -p admin https://api.hub-cluster.example.com:6443
+
+# Verify RHACM installation
+oc get pods -n open-cluster-management
+Create Observability Namespace
+# Create the observability namespace
+oc create namespace open-cluster-management-observability
+
+# Verify namespace creation
+oc get namespace open-cluster-management-observability
+Configure Object Storage for Observability
+Create a secret for object storage (using MinIO as an example):
+
+# Create storage secret
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-object-storage
+  namespace: open-cluster-management-observability
+type: Opaque
+stringData:
+  thanos.yaml: |
+    type: s3
+    config:
+      bucket: "observability-bucket"
+      endpoint: "minio.minio.svc.cluster.local:9000"
+      insecure: true
+      access_key: "minio"
+      secret_key: "minio123"
+EOF
+Create MultiClusterObservability Custom Resource
+cat << EOF | oc apply -f -
+apiVersion: observability.open-cluster-management.io/v1beta2
+kind: MultiClusterObservability
+metadata:
+  name: observability
+  namespace: open-cluster-management-observability
+spec:
+  observabilityAddonSpec:
+    enableMetrics: true
+    interval: 30
+  storageConfig:
+    metricObjectStorage:
+      name: thanos-object-storage
+      key: thanos.yaml
+    storageClass: gp2
+    alertmanagerStorageSize: 1Gi
+    compactStorageSize: 100Gi
+    ruleStorageSize: 1Gi
+    receiveStorageSize: 100Gi
+    storeStorageSize: 10Gi
+EOF
+Subtask 1.2: Verify Observability Components
+Check Observability Pods Status
+# Monitor observability pods deployment
+watch oc get pods -n open-cluster-management-observability
+
+# Wait for all pods to be running (this may take 5-10 minutes)
+oc get pods -n open-cluster-management-observability | grep -v Running
+Verify Metrics Collection
+# Check if metrics are being collected
+oc get managedclusteraddons -A | grep observability
+
+# Verify observability addon status
+oc describe managedclusteraddon observability-addon -n cluster1
+Subtask 1.3: Configure Cluster Logging
+Enable Cluster Logging on Managed Clusters
+# Switch to managed cluster context
+oc config use-context cluster1
+
+# Create logging namespace
+oc create namespace openshift-logging
+
+# Install cluster logging operator
+cat << EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-logging
+  namespace: openshift-logging
+spec:
+  channel: stable
+  name: cluster-logging
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+Configure ClusterLogging Instance
+# Wait for operator to be ready
+oc wait --for=condition=Ready pod -l name=cluster-logging-operator -n openshift-logging --timeout=300s
+
+# Create ClusterLogging instance
+cat << EOF | oc apply -f -
+apiVersion: logging.coreos.com/v1
+kind: ClusterLogging
+metadata:
+  name: instance
+  namespace: openshift-logging
+spec:
+  managementState: Managed
+  logStore:
+    type: elasticsearch
+    retentionPolicy:
+      application:
+        maxAge: 7d
+      infra:
+        maxAge: 7d
+      audit:
+        maxAge: 7d
+    elasticsearch:
+      nodeCount: 1
+      storage:
+        storageClassName: gp2
+        size: 10G
+      resources:
+        requests:
+          memory: 2Gi
+        limits:
+          memory: 2Gi
+  visualization:
+    type: kibana
+    kibana:
+      replicas: 1
+  collection:
+    logs:
+      type: fluentd
+      fluentd: {}
+EOF
+Task 2: Test and Validate Automatic Version Upgrades
+Subtask 2.1: Configure Cluster Update Policies
+Switch Back to Hub Cluster
+# Return to hub cluster context
+oc config use-context hub-cluster
+
+# Verify current cluster versions
+oc get managedclusters -o custom-columns=NAME:.metadata.name,VERSION:.status.version.kubernetes
+Create ClusterImageSet for Target Version
+# Check available cluster image sets
+oc get clusterimageset
+
+# Create a new cluster image set for upgrade
+cat << EOF | oc apply -f -
+apiVersion: hive.openshift.io/v1
+kind: ClusterImageSet
+metadata:
+  name: img4.12.0-x86-64
+spec:
+  releaseImage: quay.io/openshift-release-dev/ocp-release:4.12.0-x86_64
+EOF
+Create Upgrade Policy
+cat << EOF | oc apply -f -
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: cluster-upgrade-policy
+  namespace: default
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cluster-upgrade-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.openshift.io/v1
+                kind: ClusterVersion
+                metadata:
+                  name: version
+                spec:
+                  desiredUpdate:
+                    version: "4.12.0"
+                    image: quay.io/openshift-release-dev/ocp-release:4.12.0-x86_64
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: cluster-upgrade-binding
+  namespace: default
+spec:
+  bindingOverrides:
+    remediationAction: enforce
+  placementRef:
+    name: cluster-upgrade-placement
+    kind: PlacementRule
+    apiGroup: apps.open-cluster-management.io
+  subjects:
+    - name: cluster-upgrade-policy
+      kind: Policy
+      apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: cluster-upgrade-placement
+  namespace: default
+spec:
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchLabels:
+      environment: development
+EOF
+Subtask 2.2: Monitor Upgrade Progress
+Check Upgrade Status
+# Monitor policy compliance
+oc get policy cluster-upgrade-policy -o yaml
+
+# Check cluster version status on managed cluster
+oc --context=cluster1 get clusterversion version -o yaml
+Create Upgrade Monitoring Script
+cat << 'EOF' > monitor-upgrade.sh
+#!/bin/bash
+
+echo "Monitoring cluster upgrade progress..."
+echo "======================================"
+
+while true; do
+    echo "$(date): Checking upgrade status..."
+    
+    # Check hub cluster policy status
+    echo "Policy Status:"
+    oc get policy cluster-upgrade-policy -o jsonpath='{.status.compliant}' 2>/dev/null || echo "Policy not found"
+    
+    # Check managed cluster version
+    echo "Managed Cluster Version:"
+    oc --context=cluster1 get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "Cannot connect to managed cluster"
+    
+    # Check upgrade progress
+    echo "Upgrade Progress:"
+    oc --context=cluster1 get clusterversion version -o jsonpath='{.status.conditions[?(@.type=="Progressing")].message}' 2>/dev/null || echo "No progress info"
+    
+    echo "------------------------"
+    sleep 60
+done
+EOF
+
+chmod +x monitor-upgrade.sh
+Run Upgrade Monitoring
+# Start monitoring (run in background)
+./monitor-upgrade.sh &
+MONITOR_PID=$!
+
+# You can stop monitoring later with:
+# kill $MONITOR_PID
+Subtask 2.3: Validate Upgrade Completion
+Verify Successful Upgrade
+# Check final cluster version
+oc --context=cluster1 get clusterversion version -o jsonpath='{.status.history[0].version}'
+
+# Verify cluster operators are stable
+oc --context=cluster1 get clusteroperators | grep -v "True.*False.*False"
+
+# Check node versions
+oc --context=cluster1 get nodes -o wide
+Validate Cluster Health Post-Upgrade
+# Check all pods are running
+oc --context=cluster1 get pods --all-namespaces | grep -v Running | grep -v Completed
+
+# Verify critical services
+oc --context=cluster1 get pods -n openshift-apiserver
+oc --context=cluster1 get pods -n openshift-controller-manager
+Task 3: Check Cluster Health Using RHACM Dashboard and CLI Commands
+Subtask 3.1: Access RHACM Dashboard
+Get Dashboard URL
+# Get RHACM console route
+oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}'
+
+# Get login credentials
+echo "Username: admin"
+oc extract secret/multiclusterhub-operator-token -n open-cluster-management --to=-
+Navigate Dashboard Sections
+Access the following sections in the RHACM web console:
+
+Clusters: Overview of all managed clusters
+Infrastructure: Cluster infrastructure details
+Applications: Application deployment status
+Governance: Policy compliance status
+Subtask 3.2: Monitor Cluster Health via CLI
+Check Managed Cluster Status
+# List all managed clusters with status
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[0].status,JOINED:.status.conditions[1].status
+
+# Get detailed cluster information
+oc describe managedcluster cluster1
+Monitor Cluster Conditions
+# Create cluster health monitoring script
+cat << 'EOF' > cluster-health-check.sh
+#!/bin/bash
+
+echo "RHACM Cluster Health Report"
+echo "=========================="
+echo "Generated: $(date)"
+echo ""
+
+# Check hub cluster health
+echo "Hub Cluster Status:"
+echo "-------------------"
+oc get pods -n open-cluster-management | grep -v Running | wc -l | xargs echo "Non-running pods:"
+oc get managedclusters --no-headers | wc -l | xargs echo "Total managed clusters:"
+
+echo ""
+
+# Check each managed cluster
+echo "Managed Clusters Health:"
+echo "------------------------"
+
+for cluster in $(oc get managedclusters -o name | cut -d'/' -f2); do
+    echo "Cluster: $cluster"
+    
+    # Check availability
+    available=$(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}')
+    echo "  Available: $available"
+    
+    # Check join status
+    joined=$(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}')
+    echo "  Joined: $joined"
+    
+    # Check version
+    version=$(oc get managedcluster $cluster -o jsonpath='{.status.version.kubernetes}')
+    echo "  Version: $version"
+    
+    # Check last heartbeat
+    heartbeat=$(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].lastTransitionTime}')
+    echo "  Last Heartbeat: $heartbeat"
+    
+    echo ""
+done
+
+# Check observability status
+echo "Observability Status:"
+echo "--------------------"
+oc get pods -n open-cluster-management-observability | grep -v Running | wc -l | xargs echo "Non-running observability pods:"
+
+# Check policy compliance
+echo "Policy Compliance:"
+echo "------------------"
+oc get policies --all-namespaces --no-headers | wc -l | xargs echo "Total policies:"
+oc get policies --all-namespaces -o jsonpath='{.items[?(@.status.compliant=="NonCompliant")].metadata.name}' | wc -w | xargs echo "Non-compliant policies:"
+
+EOF
+
+chmod +x cluster-health-check.sh
+Run Health Check
+# Execute health check
+./cluster-health-check.sh
+
+# Save report to file
+./cluster-health-check.sh > cluster-health-report-$(date +%Y%m%d-%H%M%S).txt
+Subtask 3.3: Set Up Automated Health Monitoring
+Create Health Monitoring CronJob
+cat << EOF | oc apply -f -
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cluster-health-monitor
+  namespace: open-cluster-management
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: cluster-health-monitor
+          containers:
+          - name: health-check
+            image: registry.redhat.io/ubi8/ubi:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              # Install oc client
+              curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+              mv oc /usr/local/bin/
+              
+              # Run health checks
+              echo "Cluster Health Check - $(date)"
+              oc get managedclusters
+              oc get pods -n open-cluster-management-observability | grep -v Running || echo "All observability pods running"
+              
+              # Check for alerts (if Prometheus is configured)
+              echo "Checking for critical alerts..."
+              oc get prometheusrules -A | grep -i critical || echo "No critical alert rules found"
+          restartPolicy: OnFailure
+EOF
+Create Service Account for Monitoring
+# Create service account
+oc create serviceaccount cluster-health-monitor -n open-cluster-management
+
+# Create cluster role binding
+oc create clusterrolebinding cluster-health-monitor \
+  --clusterrole=cluster-admin \
+  --serviceaccount=open-cluster-management:cluster-health-monitor
+Subtask 3.4: Configure Alerting
+Create Alert Rules for Cluster Health
+cat << EOF | oc apply -f -
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rhacm-cluster-health-alerts
+  namespace: open-cluster-management-observability
+spec:
+  groups:
+  - name: rhacm.cluster.health
+    rules:
+    - alert: ManagedClusterDown
+      expr: acm_managed_cluster_info{managed_cluster_id!=""} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Managed cluster {{ \$labels.managed_cluster_id }} is down"
+        description: "Managed cluster {{ \$labels.managed_cluster_id }} has been unavailable for more than 5 minutes."
+    
+    - alert: ClusterUpgradeFailed
+      expr: increase(cluster_version_operator_update_retrieval_timestamp[1h]) == 0 and cluster_version_operator_update_retrieval_timestamp > 0
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Cluster upgrade may have failed"
+        description: "Cluster upgrade has not progressed in the last 30 minutes."
+    
+    - alert: ObservabilityComponentDown
+      expr: up{job=~".*observability.*"} == 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Observability component is down"
+        description: "Observability component {{ \$labels.job }} has been down for more than 10 minutes."
+EOF
+Verify Alert Rules
+# Check if alert rules are loaded
+oc get prometheusrules -n open-cluster-management-observability
+
+# Check Prometheus targets
+oc get route prometheus -n open-cluster-management-observability -o jsonpath='{.spec.host}'
+Troubleshooting Common Issues
+Issue 1: Observability Pods Not Starting
+Symptoms: Observability pods stuck in Pending or CrashLoopBackOff state
+
+Solution:
+
+# Check storage class availability
+oc get storageclass
+
+# Verify object storage connectivity
+oc logs deployment/observability-thanos-receive -n open-cluster-management-observability
+
+# Check resource requirements
+oc describe pod -l app=multicluster-observability-operator -n open-cluster-management-observability
+Issue 2: Managed Cluster Not Reporting Metrics
+Symptoms: No metrics visible for managed cluster in Grafana
+
+Solution:
+
+# Check observability addon status
+oc get managedclusteraddons -A | grep observability
+
+# Restart observability addon
+oc delete managedclusteraddon observability-addon -n cluster1
+# Wait for automatic recreation
+
+# Check metrics endpoint
+oc --context=cluster1 get pods -n open-cluster-management-addon-observability
+Issue 3: Upgrade Policy Not Applied
+Symptoms: Cluster upgrade policy shows as non-compliant
+
+Solution:
+
+# Check placement rule
+oc get placementrule cluster-upgrade-placement -o yaml
+
+# Verify cluster labels
+oc get managedcluster cluster1 --show-labels
+
+# Check policy template syntax
+oc get policy cluster-upgrade-policy -o yaml | grep -A 20 object-templates
+Validation and Testing
+Test 1: Verify Monitoring Setup
+# Test observability metrics collection
+curl -k "https://$(oc get route observability-thanos-querier -n open-cluster-management-observability -o jsonpath='{.spec.host}')/api/v1/query?query=up"
+
+# Verify cluster health metrics
+oc exec -n open-cluster-management-observability deployment/observability-thanos-querier -- \
+  curl -s "http://localhost:9090/api/v1/query?query=acm_managed_cluster_info"
+Test 2: Validate Upgrade Process
+# Simulate upgrade test (dry-run)
+oc --context=cluster1 adm upgrade --to-latest=true --dry-run
+
+# Check upgrade history
+oc --context=cluster1 get clusterversion version -o jsonpath='{.status.history}' | jq .
+Test 3: Dashboard Functionality
+Access RHACM dashboard
+Navigate to Clusters → Overview
+Verify all clusters show "Ready" status
+Check Infrastructure → Clusters for detailed metrics
+Review Governance → Policies for compliance status
+Conclusion
+In this lab, you have successfully:
+
+Configured comprehensive cluster monitoring by setting up RHACM observability components, enabling metrics collection, and implementing logging across managed clusters
+Implemented automated upgrade management by creating upgrade policies, monitoring upgrade progress, and validating successful cluster updates
+Established health monitoring practices using both the RHACM dashboard and CLI tools to track cluster status, performance metrics, and compliance
+Key Achievements
+Observability Setup: You deployed and configured the MultiClusterObservability operator, enabling centralized monitoring of all managed clusters with persistent storage for metrics and logs.
+
+Upgrade Automation: You created and tested cluster upgrade policies that automatically manage OpenShift version updates across your fleet of managed clusters, ensuring consistency and reducing manual intervention.
+
+Health Monitoring: You established comprehensive health monitoring using dashboard visualizations, CLI commands, and automated scripts that provide real-time insights into cluster status and performance.
+
+Alerting and Automation: You configured Prometheus alert rules and automated monitoring jobs that proactively identify and report cluster health issues.
+
+Why This Matters
+For Organizations: This lab demonstrates enterprise-grade cluster management capabilities that are essential for maintaining large-scale OpenShift deployments. The monitoring and upgrade automation you've implemented reduces operational overhead while improving reliability and security.
+
+For Your Career: These skills are directly applicable to the Red Hat Certified Specialist in Multi Cluster Management exam and are highly valued in DevOps and platform engineering roles. You now understand how to maintain cluster health at scale, which is crucial for production environments.
+
+For Real-World Applications: The techniques you've learned enable you to manage dozens or hundreds of OpenShift clusters efficiently, ensuring they remain secure, up-to-date, and performant with minimal manual intervention.
+
+The monitoring and health management capabilities you've implemented form the foundation for advanced multi-cluster operations, including disaster recovery, capacity planning, and automated remediation workflows.

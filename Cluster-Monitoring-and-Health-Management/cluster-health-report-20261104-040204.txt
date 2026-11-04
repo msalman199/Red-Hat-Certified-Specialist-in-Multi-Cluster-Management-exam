@@ -1,0 +1,18 @@
+RHACM Cluster Health Report
+==========================
+Generated: Wed Nov  4 04:02:04 UTC 2026
+
+Hub Cluster Status:
+-------------------
+Non-running pods: 0
+Total managed clusters: 0
+
+Managed Clusters Health:
+------------------------
+Observability Status:
+--------------------
+Non-running observability pods: 0
+Policy Compliance:
+------------------
+Total policies: 0
+Non-compliant policies: 0
