@@ -1,0 +1,528 @@
+Lab 3: Importing Existing Clusters into RHACM
+Objectives
+By the end of this lab, you will be able to:
+
+Understand the cluster import process in Red Hat Advanced Cluster Management (RHACM)
+Import existing OpenShift clusters into RHACM using the oc CLI
+Configure cluster import settings and authentication
+Monitor and verify the health status of imported clusters
+Troubleshoot common cluster import issues
+Manage imported clusters through the RHACM console
+Prerequisites
+Before starting this lab, ensure you have:
+
+Basic knowledge of OpenShift Container Platform
+Familiarity with Kubernetes concepts and kubectl/oc CLI commands
+Understanding of YAML configuration files
+Access to at least two OpenShift clusters (one hub cluster with RHACM installed, one managed cluster to import)
+Cluster administrator privileges on both clusters
+Network connectivity between the hub cluster and the cluster to be imported
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment. No need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+RHACM hub cluster (pre-installed and configured)
+Target OpenShift cluster ready for import
+Pre-configured oc CLI tools
+Network connectivity between clusters
+Lab Environment Overview
+In this lab, you will work with:
+
+Hub Cluster: OpenShift cluster with RHACM installed
+Managed Cluster: Existing OpenShift cluster to be imported
+RHACM Console: Web interface for cluster management
+oc CLI: Command-line tool for cluster operations
+Task 1: Prepare for Cluster Import
+Subtask 1.1: Verify Hub Cluster Access
+First, let's ensure you have access to your RHACM hub cluster and verify the installation.
+
+Connect to the hub cluster:
+# Set the hub cluster context
+oc login --server=https://api.hub-cluster.example.com:6443 --username=admin --password=your-password
+
+# Verify you're connected to the correct cluster
+oc whoami
+oc cluster-info
+Verify RHACM installation:
+# Check if RHACM operator is installed
+oc get operators -A | grep advanced-cluster-management
+
+# Verify RHACM pods are running
+oc get pods -n open-cluster-management
+
+# Check MultiClusterHub status
+oc get multiclusterhub -n open-cluster-management
+Access RHACM console:
+# Get the RHACM console route
+oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}'
+Subtask 1.2: Verify Target Cluster Access
+Now, let's verify access to the cluster you want to import.
+
+Connect to the target cluster:
+# Set the managed cluster context
+oc login --server=https://api.managed-cluster.example.com:6443 --username=admin --password=your-password
+
+# Verify cluster access and get cluster information
+oc whoami
+oc get nodes
+oc get clusterversion
+Check cluster readiness:
+# Verify cluster operators are available
+oc get co
+
+# Check cluster resources
+oc get namespaces
+oc top nodes
+Note cluster details for import:
+# Get cluster API server URL
+oc whoami --show-server
+
+# Get cluster name
+oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}'
+Task 2: Import Cluster Using oc CLI
+Subtask 2.1: Create ManagedCluster Resource
+Switch back to your hub cluster and create the necessary resources to import the target cluster.
+
+Switch to hub cluster context:
+# Return to hub cluster
+oc login --server=https://api.hub-cluster.example.com:6443 --username=admin --password=your-password
+
+# Verify you're on the hub cluster
+oc get multiclusterhub -n open-cluster-management
+Create ManagedCluster resource:
+# Create a YAML file for the ManagedCluster
+cat > managed-cluster-import.yaml << EOF
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: imported-cluster-01
+  labels:
+    cloud: auto-detect
+    vendor: auto-detect
+    environment: production
+    region: us-east-1
+spec:
+  hubAcceptsClient: true
+  leaseDurationSeconds: 60
+EOF
+
+# Apply the ManagedCluster resource
+oc apply -f managed-cluster-import.yaml
+Verify ManagedCluster creation:
+# Check if the ManagedCluster was created
+oc get managedcluster imported-cluster-01
+
+# View detailed information
+oc describe managedcluster imported-cluster-01
+Subtask 2.2: Generate Import Command
+Generate the import command that will be executed on the target cluster.
+
+Create KlusterletAddonConfig:
+# Create addon configuration for the managed cluster
+cat > klusterlet-addon-config.yaml << EOF
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: imported-cluster-01
+  namespace: imported-cluster-01
+spec:
+  clusterName: imported-cluster-01
+  clusterNamespace: imported-cluster-01
+  clusterLabels:
+    cloud: auto-detect
+    vendor: auto-detect
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+  iamPolicyController:
+    enabled: true
+EOF
+
+# Apply the addon configuration
+oc apply -f klusterlet-addon-config.yaml
+Generate import secret:
+# Get the import secret from the managed cluster namespace
+oc get secret -n imported-cluster-01 imported-cluster-01-import -o jsonpath='{.data.import\.yaml}' | base64 -d > import-command.yaml
+
+# View the generated import command
+cat import-command.yaml
+Alternative method - Generate import command directly:
+# Use RHACM CLI to generate import command
+oc get secret -n imported-cluster-01 imported-cluster-01-import -o jsonpath='{.data.crds\.yaml}' | base64 -d > import-crds.yaml
+oc get secret -n imported-cluster-01 imported-cluster-01-import -o jsonpath='{.data.import\.yaml}' | base64 -d > import-resources.yaml
+Subtask 2.3: Execute Import on Target Cluster
+Now switch to the target cluster and execute the import command.
+
+Switch to target cluster:
+# Connect to the managed cluster
+oc login --server=https://api.managed-cluster.example.com:6443 --username=admin --password=your-password
+
+# Verify connection
+oc whoami --show-server
+Apply import resources:
+# First apply CRDs if using separate files
+oc apply -f import-crds.yaml
+
+# Apply the import resources
+oc apply -f import-resources.yaml
+
+# Or if using single file
+# oc apply -f import-command.yaml
+Verify klusterlet installation:
+# Check if open-cluster-management-agent namespace was created
+oc get namespace open-cluster-management-agent
+
+# Verify klusterlet pods are running
+oc get pods -n open-cluster-management-agent
+
+# Check klusterlet status
+oc get klusterlet -A
+Task 3: Monitor and Verify Cluster Import
+Subtask 3.1: Check Import Status on Hub Cluster
+Return to the hub cluster to monitor the import progress.
+
+Switch back to hub cluster:
+# Connect to hub cluster
+oc login --server=https://api.hub-cluster.example.com:6443 --username=admin --password=your-password
+Monitor ManagedCluster status:
+# Check the status of the imported cluster
+oc get managedcluster imported-cluster-01
+
+# View detailed status information
+oc describe managedcluster imported-cluster-01
+
+# Check for any conditions or issues
+oc get managedcluster imported-cluster-01 -o yaml | grep -A 10 conditions
+Verify cluster agents:
+# Check if the managed cluster namespace exists
+oc get namespace imported-cluster-01
+
+# Verify addon status
+oc get klusterletaddonconfig -n imported-cluster-01
+
+# Check managed cluster addons
+oc get managedclusteraddons -n imported-cluster-01
+Subtask 3.2: Validate Cluster Health and Connectivity
+Perform comprehensive health checks on the imported cluster.
+
+Check cluster availability:
+# Verify cluster is available and joined
+oc get managedcluster imported-cluster-01 -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}'
+
+# Check cluster join status
+oc get managedcluster imported-cluster-01 -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}'
+Monitor cluster metrics:
+# Check cluster resource usage
+oc get managedclusterinfo -n imported-cluster-01
+
+# View cluster details
+oc describe managedclusterinfo -n imported-cluster-01
+Verify addon functionality:
+# Check application manager addon
+oc get managedclusteraddons application-manager -n imported-cluster-01
+
+# Check policy controller addon
+oc get managedclusteraddons governance-policy-framework -n imported-cluster-01
+
+# Check search collector addon
+oc get managedclusteraddons search-collector -n imported-cluster-01
+Subtask 3.3: Test Cluster Management Capabilities
+Test basic management operations on the imported cluster.
+
+Create a test namespace on managed cluster:
+# Create a namespace through RHACM
+cat > test-namespace.yaml << EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhacm-test
+  labels:
+    managed-by: rhacm
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: test-placement
+  namespace: rhacm-test
+spec:
+  clusterSelector:
+    matchLabels:
+      name: imported-cluster-01
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: test-subscription
+  namespace: rhacm-test
+spec:
+  channel: rhacm-test/test-channel
+  placement:
+    placementRef:
+      name: test-placement
+      kind: PlacementRule
+EOF
+
+# Apply the test resources
+oc apply -f test-namespace.yaml
+Verify deployment on managed cluster:
+# Switch to managed cluster to verify
+oc login --server=https://api.managed-cluster.example.com:6443 --username=admin --password=your-password
+
+# Check if namespace was created
+oc get namespace rhacm-test
+
+# Verify RHACM agents are working
+oc get pods -n open-cluster-management-agent
+Test policy deployment:
+# Switch back to hub cluster
+oc login --server=https://api.hub-cluster.example.com:6443 --username=admin --password=your-password
+
+# Create a simple policy
+cat > test-policy.yaml << EOF
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: test-namespace-policy
+  namespace: imported-cluster-01
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: test-namespace-config
+        spec:
+          remediationAction: inform
+          severity: low
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: policy-test-namespace
+EOF
+
+# Apply the test policy
+oc apply -f test-policy.yaml
+
+# Check policy status
+oc get policy -n imported-cluster-01
+Task 4: Advanced Cluster Management and Monitoring
+Subtask 4.1: Configure Cluster Labels and Annotations
+Enhance cluster management by adding meaningful labels and annotations.
+
+Add cluster labels:
+# Add environment label
+oc label managedcluster imported-cluster-01 environment=production
+
+# Add location label
+oc label managedcluster imported-cluster-01 location=datacenter-east
+
+# Add team ownership label
+oc label managedcluster imported-cluster-01 team=platform-engineering
+
+# Verify labels
+oc get managedcluster imported-cluster-01 --show-labels
+Add cluster annotations:
+# Add annotations for additional metadata
+oc annotate managedcluster imported-cluster-01 import-date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+oc annotate managedcluster imported-cluster-01 imported-by="$(oc whoami)"
+oc annotate managedcluster imported-cluster-01 cluster-purpose="production-workloads"
+
+# View annotations
+oc get managedcluster imported-cluster-01 -o yaml | grep -A 10 annotations
+Subtask 4.2: Set Up Cluster Monitoring and Alerting
+Configure monitoring and alerting for the imported cluster.
+
+Enable observability addons:
+# Check if observability is available
+oc get multiclusterobservability -A
+
+# Enable metrics collection
+oc patch klusterletaddonconfig imported-cluster-01 -n imported-cluster-01 --type='merge' -p='{"spec":{"searchCollector":{"enabled":true}}}'
+
+# Verify addon status
+oc get managedclusteraddons -n imported-cluster-01
+Create cluster monitoring dashboard:
+# Create a custom resource for cluster monitoring
+cat > cluster-monitoring.yaml << EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: imported-cluster-01
+data:
+  config.yaml: |
+    enableUserWorkloadMonitoring: true
+    prometheusK8s:
+      retention: 7d
+      resources:
+        requests:
+          cpu: 100m
+          memory: 1Gi
+EOF
+
+# Apply monitoring configuration
+oc apply -f cluster-monitoring.yaml
+Subtask 4.3: Implement Cluster Backup and Disaster Recovery
+Set up backup and recovery procedures for the imported cluster.
+
+Create cluster backup policy:
+# Create backup policy
+cat > cluster-backup-policy.yaml << EOF
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: cluster-backup-policy
+  namespace: imported-cluster-01
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: etcd-backup-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: CronJob
+                metadata:
+                  name: etcd-backup
+                  namespace: openshift-etcd
+                spec:
+                  schedule: "0 2 * * *"
+                  jobTemplate:
+                    spec:
+                      template:
+                        spec:
+                          containers:
+                          - name: etcd-backup
+                            image: registry.redhat.io/ubi8/ubi:latest
+                            command:
+                            - /bin/bash
+                            - -c
+                            - echo "Backup job placeholder"
+                          restartPolicy: OnFailure
+EOF
+
+# Apply backup policy
+oc apply -f cluster-backup-policy.yaml
+Troubleshooting Common Issues
+Issue 1: Cluster Import Fails
+Symptoms: ManagedCluster shows as unavailable or import command fails
+
+Solutions:
+
+# Check network connectivity
+oc get managedcluster imported-cluster-01 -o yaml | grep -A 5 conditions
+
+# Verify certificates
+oc get secret -n imported-cluster-01 | grep import
+
+# Check klusterlet logs on managed cluster
+oc logs -n open-cluster-management-agent deployment/klusterlet
+Issue 2: Addons Not Working
+Symptoms: ManagedClusterAddons show as degraded
+
+Solutions:
+
+# Check addon status
+oc get managedclusteraddons -n imported-cluster-01
+
+# Restart addon pods
+oc delete pods -n open-cluster-management-agent -l app=klusterlet
+
+# Verify addon configuration
+oc describe klusterletaddonconfig imported-cluster-01 -n imported-cluster-01
+Issue 3: Policy Not Applied
+Symptoms: Policies remain in pending or non-compliant state
+
+Solutions:
+
+# Check policy status
+oc describe policy test-namespace-policy -n imported-cluster-01
+
+# Verify policy controller
+oc get pods -n open-cluster-management-agent | grep governance
+
+# Check placement rules
+oc get placementrule -A
+Verification and Testing
+Final Verification Checklist
+Cluster Status Verification:
+# Verify cluster is available and joined
+oc get managedcluster imported-cluster-01 -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status
+
+# Check all addons are healthy
+oc get managedclusteraddons -n imported-cluster-01
+Functionality Testing:
+# Test policy deployment
+oc get policies -A
+
+# Test application deployment
+oc get applications -A
+
+# Verify monitoring data
+oc get managedclusterinfo -n imported-cluster-01
+Security Verification:
+# Check certificates
+oc get secrets -n imported-cluster-01 | grep tls
+
+# Verify RBAC
+oc get clusterrolebindings | grep open-cluster-management
+Cleanup (Optional)
+If you need to remove the imported cluster:
+
+# Delete the managed cluster (this will trigger cleanup on managed cluster)
+oc delete managedcluster imported-cluster-01
+
+# Clean up any remaining resources
+oc delete namespace imported-cluster-01
+
+# On the managed cluster, verify cleanup
+oc delete namespace open-cluster-management-agent
+Conclusion
+Congratulations! You have successfully completed Lab 3: Importing Existing Clusters into RHACM. In this lab, you accomplished the following:
+
+Key Achievements:
+
+Successfully imported an existing OpenShift cluster into RHACM using the oc CLI
+Configured cluster import settings and verified authentication
+Monitored cluster health and validated connectivity between hub and managed clusters
+Implemented advanced cluster management features including labeling, monitoring, and policy deployment
+Learned troubleshooting techniques for common import issues
+Why This Matters:
+
+Centralized Management: You can now manage multiple OpenShift clusters from a single hub, reducing operational complexity
+Consistent Governance: Policies and configurations can be applied consistently across all managed clusters
+Enhanced Visibility: Centralized monitoring and observability provide better insights into your cluster fleet
+Scalability: This foundation allows you to scale your cluster management operations efficiently
+Compliance: Centralized policy management helps maintain compliance across your infrastructure
+Real-World Applications:
+
+Managing development, staging, and production clusters from a single control plane
+Implementing consistent security policies across multiple clusters
+Centralizing monitoring and alerting for distributed applications
+Streamlining cluster lifecycle management and updates
+Next Steps:
+
+Explore advanced policy management and governance features
+Implement application lifecycle management across clusters
+Set up advanced monitoring and observability solutions
+Practice disaster recovery and backup procedures
+This lab has provided you with essential skills for the Red Hat Certified Specialist in Multi Cluster Management exam and real-world cluster management scenarios. The ability to import and manage existing clusters is fundamental to building a robust, scalable multi-cluster architecture.
