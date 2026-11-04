@@ -1,0 +1,150 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: gitops-policy-automation
+  namespace: policy-automation
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: DE.CM Security Continuous Monitoring
+    policy.open-cluster-management.io/controls: DE.CM-7
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-operator-config
+        spec:
+          remediationAction: inform
+          severity: low
+          namespaceSelector:
+            include:
+              - openshift-gitops
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: openshift-gitops
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: ArgoCD
+                metadata:
+                  name: openshift-gitops
+                  namespace: openshift-gitops
+                spec:
+                  server:
+                    autoscale:
+                      enabled: false
+                    grpc:
+                      ingress:
+                        enabled: false
+                    ingress:
+                      enabled: false
+                    route:
+                      enabled: true
+                  grafana:
+                    enabled: false
+                  prometheus:
+                    enabled: false
+                  initialSSHKnownHosts: {}
+                  applicationSet:
+                    resources:
+                      limits:
+                        cpu: 1000m
+                        memory: 1Gi
+                      requests:
+                        cpu: 250m
+                        memory: 512Mi
+                  rbac:
+                    defaultPolicy: 'role:readonly'
+                    policy: |
+                      g, system:cluster-admins, role:admin
+                    scopes: '[groups]'
+                  repo:
+                    resources:
+                      limits:
+                        cpu: 1000m
+                        memory: 1Gi
+                      requests:
+                        cpu: 250m
+                        memory: 256Mi
+                  resourceExclusions: |
+                    - apiGroups:
+                      - tekton.dev
+                      clusters:
+                      - '*'
+                      kinds:
+                      - TaskRun
+                      - PipelineRun
+                  dex:
+                    openShiftOAuth: true
+                    resources:
+                      limits:
+                        cpu: 500m
+                        memory: 256Mi
+                      requests:
+                        cpu: 250m
+                        memory: 128Mi
+                  ha:
+                    enabled: false
+                    resources:
+                      limits:
+                        cpu: 500m
+                        memory: 256Mi
+                      requests:
+                        cpu: 250m
+                        memory: 128Mi
+                  tls:
+                    ca: {}
+                  redis:
+                    resources:
+                      limits:
+                        cpu: 500m
+                        memory: 256Mi
+                      requests:
+                        cpu: 250m
+                        memory: 128Mi
+                  controller:
+                    processors: {}
+                    resources:
+                      limits:
+                        cpu: 2000m
+                        memory: 2Gi
+                      requests:
+                        cpu: 250m
+                        memory: 1Gi
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-gitops-policy-automation
+  namespace: policy-automation
+placementRef:
+  name: placement-gitops-policy-automation
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: gitops-policy-automation
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-gitops-policy-automation
+  namespace: policy-automation
+spec:
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchExpressions:
+      - key: environment
+        operator: In
+        values:
+          - dev

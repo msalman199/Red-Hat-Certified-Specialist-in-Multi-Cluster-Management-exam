@@ -1,0 +1,82 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: security-policy-remediation
+  namespace: policy-automation
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.AC Identity Management Authentication and Access Control
+    policy.open-cluster-management.io/controls: PR.AC-4
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: security-pod-policy
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            exclude:
+              - kube-*
+              - open-cluster-*
+            include:
+              - default
+              - policy-test
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: NetworkPolicy
+                metadata:
+                  name: deny-all-ingress
+                  namespace: policy-test
+                spec:
+                  podSelector: {}
+                  policyTypes:
+                    - Ingress
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  namespace: policy-test
+                spec:
+                  containers:
+                    - name: "*"
+                      securityContext:
+                        privileged: true
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-security-policy-remediation
+  namespace: policy-automation
+placementRef:
+  name: placement-security-policy-remediation
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: security-policy-remediation
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-security-policy-remediation
+  namespace: policy-automation
+spec:
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchExpressions:
+      - key: environment
+        operator: In
+        values:
+          - dev
+          - staging

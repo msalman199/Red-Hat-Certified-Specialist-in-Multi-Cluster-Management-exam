@@ -1,0 +1,82 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: resource-quota-policy
+  namespace: policy-automation
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.DS Data Security
+    policy.open-cluster-management.io/controls: PR.DS-4
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: resource-quota-config
+        spec:
+          remediationAction: enforce
+          severity: medium
+          namespaceSelector:
+            include:
+              - policy-test
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ResourceQuota
+                metadata:
+                  name: compute-quota
+                  namespace: policy-test
+                spec:
+                  hard:
+                    requests.cpu: "2"
+                    requests.memory: 4Gi
+                    limits.cpu: "4"
+                    limits.memory: 8Gi
+                    persistentvolumeclaims: "2"
+                    pods: "10"
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: LimitRange
+                metadata:
+                  name: resource-limits
+                  namespace: policy-test
+                spec:
+                  limits:
+                    - default:
+                        cpu: 500m
+                        memory: 512Mi
+                      defaultRequest:
+                        cpu: 100m
+                        memory: 128Mi
+                      type: Container
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-resource-quota-policy
+  namespace: policy-automation
+placementRef:
+  name: placement-resource-quota-policy
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+  - name: resource-quota-policy
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-resource-quota-policy
+  namespace: policy-automation
+spec:
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchExpressions: []

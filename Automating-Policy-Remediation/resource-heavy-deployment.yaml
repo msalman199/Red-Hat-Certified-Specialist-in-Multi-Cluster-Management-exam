@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-heavy-app
+  namespace: policy-test
+spec:
+  replicas: 15
+  selector:
+    matchLabels:
+      app: resource-heavy
+  template:
+    metadata:
+      labels:
+        app: resource-heavy
+    spec:
+      containers:
+        - name: heavy-container
+          image: nginx:latest
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
