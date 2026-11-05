@@ -1,0 +1,68 @@
+# Network policy for tenant-alpha
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-alpha-isolation
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: alpha
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: alpha
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# Network policy for tenant-beta
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-beta-isolation
+  namespace: tenant-beta
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: beta
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: beta
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53

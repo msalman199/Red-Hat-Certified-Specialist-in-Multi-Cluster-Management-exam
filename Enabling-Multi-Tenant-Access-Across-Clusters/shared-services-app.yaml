@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-service
+  namespace: shared-services
+  labels:
+    app: monitoring
+    tenant: shared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+        tenant: shared
+    spec:
+      containers:
+      - name: monitoring
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        env:
+        - name: SERVICE_TYPE
+          value: "monitoring"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+  namespace: shared-services
+  labels:
+    tenant: shared
+spec:
+  selector:
+    app: monitoring
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

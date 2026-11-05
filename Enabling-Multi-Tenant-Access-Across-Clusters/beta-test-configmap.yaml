@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beta-config
+  namespace: tenant-beta
+data:
+  config.yaml: |
+    tenant: beta
+    environment: test

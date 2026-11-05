@@ -1,0 +1,952 @@
+Lab 13: Enabling Multi-Tenant Access Across Clusters
+Objectives
+By the end of this lab, students will be able to:
+
+Understand the fundamentals of multi-tenant Kubernetes environments
+Implement Role-Based Access Control (RBAC) for multi-cluster environments
+Configure secure access policies across multiple Kubernetes clusters
+Validate multi-tenant access patterns and permissions
+Troubleshoot common RBAC issues in multi-cluster setups
+Apply security best practices for multi-tenant cluster management
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes concepts (pods, services, deployments)
+Familiarity with kubectl command-line tool
+Knowledge of YAML configuration files
+Understanding of Linux command-line operations
+Basic networking concepts
+Previous experience with Kubernetes RBAC (recommended)
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides Linux-based cloud machines with all necessary tools pre-installed. Simply click Start Lab to begin - no need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+Two Kubernetes clusters (cluster-a and cluster-b)
+kubectl configured with cluster contexts
+All necessary RBAC tools and utilities
+Sample applications for testing
+Task 1: Configure RBAC for Multi-Cluster Environments
+Subtask 1.1: Verify Cluster Access and Setup
+First, let's verify that we have access to both clusters and understand our current environment.
+
+Check available cluster contexts:
+kubectl config get-contexts
+Verify access to both clusters:
+# Switch to cluster-a
+kubectl config use-context cluster-a
+kubectl get nodes
+
+# Switch to cluster-b
+kubectl config use-context cluster-b
+kubectl get nodes
+Create a working directory for our lab:
+mkdir -p ~/multi-tenant-lab
+cd ~/multi-tenant-lab
+Subtask 1.2: Create Tenant Namespaces
+We'll create separate namespaces for different tenants across both clusters.
+
+Create tenant namespaces in cluster-a:
+kubectl config use-context cluster-a
+
+# Create namespaces for different tenants
+kubectl create namespace tenant-alpha
+kubectl create namespace tenant-beta
+kubectl create namespace shared-services
+Create corresponding namespaces in cluster-b:
+kubectl config use-context cluster-b
+
+# Create the same namespaces in cluster-b
+kubectl create namespace tenant-alpha
+kubectl create namespace tenant-beta
+kubectl create namespace shared-services
+Label namespaces for better organization:
+# Label namespaces in cluster-a
+kubectl config use-context cluster-a
+kubectl label namespace tenant-alpha tenant=alpha
+kubectl label namespace tenant-beta tenant=beta
+kubectl label namespace shared-services tenant=shared
+
+# Label namespaces in cluster-b
+kubectl config use-context cluster-b
+kubectl label namespace tenant-alpha tenant=alpha
+kubectl label namespace tenant-beta tenant=beta
+kubectl label namespace shared-services tenant=shared
+Subtask 1.3: Create Service Accounts for Tenants
+Service accounts will represent our tenant users across clusters.
+
+Create service accounts in cluster-a:
+kubectl config use-context cluster-a
+
+# Create service account for tenant-alpha
+kubectl create serviceaccount alpha-user -n tenant-alpha
+
+# Create service account for tenant-beta
+kubectl create serviceaccount beta-user -n tenant-beta
+
+# Create service account for shared services admin
+kubectl create serviceaccount shared-admin -n shared-services
+Create service accounts in cluster-b:
+kubectl config use-context cluster-b
+
+# Create service account for tenant-alpha
+kubectl create serviceaccount alpha-user -n tenant-alpha
+
+# Create service account for tenant-beta
+kubectl create serviceaccount beta-user -n tenant-beta
+
+# Create service account for shared services admin
+kubectl create serviceaccount shared-admin -n shared-services
+Subtask 1.4: Define RBAC Roles and Permissions
+Now we'll create roles that define what each tenant can do within their namespaces.
+
+Create a tenant-specific role configuration file:
+cat > tenant-roles.yaml << 'EOF'
+# Role for tenant-alpha - full access within their namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: tenant-alpha
+  name: tenant-alpha-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# Role for tenant-beta - full access within their namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: tenant-beta
+  name: tenant-beta-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# Role for shared services - read-only access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: shared-services
+  name: shared-services-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRole for cross-namespace service discovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: service-discovery
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+EOF
+Apply roles to cluster-a:
+kubectl config use-context cluster-a
+kubectl apply -f tenant-roles.yaml
+Apply roles to cluster-b:
+kubectl config use-context cluster-b
+kubectl apply -f tenant-roles.yaml
+Subtask 1.5: Create Role Bindings
+Role bindings connect our service accounts to the roles we just created.
+
+Create role bindings configuration:
+cat > tenant-rolebindings.yaml << 'EOF'
+# Bind tenant-alpha service account to tenant-alpha role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-alpha-binding
+  namespace: tenant-alpha
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: Role
+  name: tenant-alpha-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind tenant-beta service account to tenant-beta role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-beta-binding
+  namespace: tenant-beta
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: Role
+  name: tenant-beta-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind both tenants to shared services reader role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shared-services-alpha-binding
+  namespace: shared-services
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: Role
+  name: shared-services-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shared-services-beta-binding
+  namespace: shared-services
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: Role
+  name: shared-services-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding for service discovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: service-discovery-alpha
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: ClusterRole
+  name: service-discovery
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: service-discovery-beta
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: ClusterRole
+  name: service-discovery
+  apiGroup: rbac.authorization.k8s.io
+EOF
+Apply role bindings to both clusters:
+# Apply to cluster-a
+kubectl config use-context cluster-a
+kubectl apply -f tenant-rolebindings.yaml
+
+# Apply to cluster-b
+kubectl config use-context cluster-b
+kubectl apply -f tenant-rolebindings.yaml
+Subtask 1.6: Create Cross-Cluster Access Tokens
+We need to create tokens that allow tenants to access both clusters.
+
+Create token extraction script:
+cat > extract-tokens.sh << 'EOF'
+#!/bin/bash
+
+# Function to get service account token
+get_sa_token() {
+    local context=$1
+    local namespace=$2
+    local sa_name=$3
+    
+    kubectl config use-context $context
+    
+    # Get the secret name for the service account
+    SECRET_NAME=$(kubectl get serviceaccount $sa_name -n $namespace -o jsonpath='{.secrets[0].name}')
+    
+    if [ -z "$SECRET_NAME" ]; then
+        # For newer Kubernetes versions, create a token manually
+        kubectl create token $sa_name -n $namespace --duration=24h
+    else
+        # For older versions, extract from secret
+        kubectl get secret $SECRET_NAME -n $namespace -o jsonpath='{.data.token}' | base64 -d
+    fi
+}
+
+echo "Extracting tokens for cluster-a..."
+echo "Alpha user token (cluster-a):"
+ALPHA_TOKEN_A=$(get_sa_token cluster-a tenant-alpha alpha-user)
+echo $ALPHA_TOKEN_A > alpha-token-cluster-a.txt
+
+echo "Beta user token (cluster-a):"
+BETA_TOKEN_A=$(get_sa_token cluster-a tenant-beta beta-user)
+echo $BETA_TOKEN_A > beta-token-cluster-a.txt
+
+echo "Extracting tokens for cluster-b..."
+echo "Alpha user token (cluster-b):"
+ALPHA_TOKEN_B=$(get_sa_token cluster-b tenant-alpha alpha-user)
+echo $ALPHA_TOKEN_B > alpha-token-cluster-b.txt
+
+echo "Beta user token (cluster-b):"
+BETA_TOKEN_B=$(get_sa_token cluster-b tenant-beta beta-user)
+echo $BETA_TOKEN_B > beta-token-cluster-b.txt
+
+echo "Tokens extracted successfully!"
+EOF
+
+chmod +x extract-tokens.sh
+./extract-tokens.sh
+Create kubeconfig files for each tenant:
+cat > create-tenant-kubeconfigs.sh << 'EOF'
+#!/bin/bash
+
+# Get cluster information
+CLUSTER_A_SERVER=$(kubectl config view -o jsonpath='{.clusters[?(@.name=="cluster-a")].cluster.server}')
+CLUSTER_B_SERVER=$(kubectl config view -o jsonpath='{.clusters[?(@.name=="cluster-b")].cluster.server}')
+
+# Create kubeconfig for tenant-alpha
+cat > alpha-kubeconfig.yaml << EOL
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: $CLUSTER_A_SERVER
+    insecure-skip-tls-verify: true
+  name: cluster-a
+- cluster:
+    server: $CLUSTER_B_SERVER
+    insecure-skip-tls-verify: true
+  name: cluster-b
+contexts:
+- context:
+    cluster: cluster-a
+    namespace: tenant-alpha
+    user: alpha-user
+  name: alpha-cluster-a
+- context:
+    cluster: cluster-b
+    namespace: tenant-alpha
+    user: alpha-user
+  name: alpha-cluster-b
+current-context: alpha-cluster-a
+users:
+- name: alpha-user
+  user:
+    token: $(cat alpha-token-cluster-a.txt)
+EOL
+
+# Create kubeconfig for tenant-beta
+cat > beta-kubeconfig.yaml << EOL
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: $CLUSTER_A_SERVER
+    insecure-skip-tls-verify: true
+  name: cluster-a
+- cluster:
+    server: $CLUSTER_B_SERVER
+    insecure-skip-tls-verify: true
+  name: cluster-b
+contexts:
+- context:
+    cluster: cluster-a
+    namespace: tenant-beta
+    user: beta-user
+  name: beta-cluster-a
+- context:
+    cluster: cluster-b
+    namespace: tenant-beta
+    user: beta-user
+  name: beta-cluster-b
+current-context: beta-cluster-a
+users:
+- name: beta-user
+  user:
+    token: $(cat beta-token-cluster-a.txt)
+EOL
+
+echo "Tenant kubeconfig files created successfully!"
+EOF
+
+chmod +x create-tenant-kubeconfigs.sh
+./create-tenant-kubeconfigs.sh
+Task 2: Validate Multi-Tenant Access Across Clusters
+Subtask 2.1: Deploy Test Applications
+Let's deploy some test applications to validate our RBAC configuration.
+
+Create test applications for tenant-alpha:
+cat > alpha-test-app.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpha-web-app
+  namespace: tenant-alpha
+  labels:
+    app: alpha-web
+    tenant: alpha
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alpha-web
+  template:
+    metadata:
+      labels:
+        app: alpha-web
+        tenant: alpha
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        env:
+        - name: TENANT
+          value: "alpha"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpha-web-service
+  namespace: tenant-alpha
+  labels:
+    tenant: alpha
+spec:
+  selector:
+    app: alpha-web
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+Create test applications for tenant-beta:
+cat > beta-test-app.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beta-api-app
+  namespace: tenant-beta
+  labels:
+    app: beta-api
+    tenant: beta
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: beta-api
+  template:
+    metadata:
+      labels:
+        app: beta-api
+        tenant: beta
+    spec:
+      containers:
+      - name: api
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        env:
+        - name: TENANT
+          value: "beta"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beta-api-service
+  namespace: tenant-beta
+  labels:
+    tenant: beta
+spec:
+  selector:
+    app: beta-api
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+Create shared services:
+cat > shared-services-app.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-service
+  namespace: shared-services
+  labels:
+    app: monitoring
+    tenant: shared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+        tenant: shared
+    spec:
+      containers:
+      - name: monitoring
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        env:
+        - name: SERVICE_TYPE
+          value: "monitoring"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+  namespace: shared-services
+  labels:
+    tenant: shared
+spec:
+  selector:
+    app: monitoring
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+Deploy applications to both clusters:
+# Deploy to cluster-a
+kubectl config use-context cluster-a
+kubectl apply -f alpha-test-app.yaml
+kubectl apply -f beta-test-app.yaml
+kubectl apply -f shared-services-app.yaml
+
+# Deploy to cluster-b
+kubectl config use-context cluster-b
+kubectl apply -f alpha-test-app.yaml
+kubectl apply -f beta-test-app.yaml
+kubectl apply -f shared-services-app.yaml
+Subtask 2.2: Test Tenant Access Permissions
+Now let's test that our RBAC configuration works correctly.
+
+Test tenant-alpha access using their kubeconfig:
+# Test access to own namespace in cluster-a
+export KUBECONFIG=alpha-kubeconfig.yaml
+kubectl config use-context alpha-cluster-a
+
+echo "Testing tenant-alpha access to their own namespace:"
+kubectl get pods -n tenant-alpha
+kubectl get services -n tenant-alpha
+
+echo "Testing tenant-alpha access to shared services (should work - read only):"
+kubectl get pods -n shared-services
+kubectl get services -n shared-services
+
+echo "Testing tenant-alpha access to tenant-beta namespace (should fail):"
+kubectl get pods -n tenant-beta || echo "Access denied - this is expected!"
+Test tenant-beta access using their kubeconfig:
+# Test access for tenant-beta
+export KUBECONFIG=beta-kubeconfig.yaml
+kubectl config use-context beta-cluster-a
+
+echo "Testing tenant-beta access to their own namespace:"
+kubectl get pods -n tenant-beta
+kubectl get services -n tenant-beta
+
+echo "Testing tenant-beta access to shared services (should work - read only):"
+kubectl get pods -n shared-services
+kubectl get services -n shared-services
+
+echo "Testing tenant-beta access to tenant-alpha namespace (should fail):"
+kubectl get pods -n tenant-alpha || echo "Access denied - this is expected!"
+Test cross-cluster access:
+# Test tenant-alpha cross-cluster access
+export KUBECONFIG=alpha-kubeconfig.yaml
+
+echo "Testing tenant-alpha access to cluster-b:"
+kubectl config use-context alpha-cluster-b
+kubectl get pods -n tenant-alpha
+kubectl get services -n tenant-alpha
+
+# Test tenant-beta cross-cluster access
+export KUBECONFIG=beta-kubeconfig.yaml
+
+echo "Testing tenant-beta access to cluster-b:"
+kubectl config use-context beta-cluster-b
+kubectl get pods -n tenant-beta
+kubectl get services -n tenant-beta
+Subtask 2.3: Test Resource Creation and Modification
+Let's verify that tenants can create and modify resources within their allowed scope.
+
+Test tenant-alpha resource creation:
+export KUBECONFIG=alpha-kubeconfig.yaml
+kubectl config use-context alpha-cluster-a
+
+# Create a test pod
+cat > alpha-test-pod.yaml << 'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: alpha-test-pod
+  namespace: tenant-alpha
+spec:
+  containers:
+  - name: test
+    image: busybox:1.35
+    command: ['sleep', '3600']
+EOF
+
+echo "Creating test pod for tenant-alpha:"
+kubectl apply -f alpha-test-pod.yaml
+
+echo "Verifying pod creation:"
+kubectl get pods -n tenant-alpha
+
+echo "Testing if tenant-alpha can create resources in tenant-beta namespace (should fail):"
+kubectl apply -f alpha-test-pod.yaml -n tenant-beta || echo "Access denied - this is expected!"
+Test tenant-beta resource creation:
+export KUBECONFIG=beta-kubeconfig.yaml
+kubectl config use-context beta-cluster-a
+
+# Create a test configmap
+cat > beta-test-configmap.yaml << 'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beta-config
+  namespace: tenant-beta
+data:
+  config.yaml: |
+    tenant: beta
+    environment: test
+EOF
+
+echo "Creating test configmap for tenant-beta:"
+kubectl apply -f beta-test-configmap.yaml
+
+echo "Verifying configmap creation:"
+kubectl get configmaps -n tenant-beta
+
+echo "Testing if tenant-beta can modify shared services (should fail):"
+kubectl delete pod monitoring-service -n shared-services || echo "Access denied - this is expected!"
+Subtask 2.4: Validate Network Policies and Isolation
+Let's implement and test network policies to ensure tenant isolation.
+
+Create network policies for tenant isolation:
+cat > network-policies.yaml << 'EOF'
+# Network policy for tenant-alpha
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-alpha-isolation
+  namespace: tenant-alpha
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: alpha
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: alpha
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# Network policy for tenant-beta
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-beta-isolation
+  namespace: tenant-beta
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: beta
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: beta
+    - namespaceSelector:
+        matchLabels:
+          tenant: shared
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+EOF
+Apply network policies to both clusters:
+# Reset to admin context
+unset KUBECONFIG
+
+# Apply to cluster-a
+kubectl config use-context cluster-a
+kubectl apply -f network-policies.yaml
+
+# Apply to cluster-b
+kubectl config use-context cluster-b
+kubectl apply -f network-policies.yaml
+Test network isolation:
+# Test from tenant-alpha pod
+kubectl config use-context cluster-a
+kubectl exec -it alpha-test-pod -n tenant-alpha -- nslookup beta-api-service.tenant-beta.svc.cluster.local || echo "Network isolation working - cannot resolve beta service"
+
+# Test access to shared services
+kubectl exec -it alpha-test-pod -n tenant-alpha -- nslookup monitoring-service.shared-services.svc.cluster.local && echo "Can access shared services - this is expected"
+Subtask 2.5: Create Monitoring and Audit Dashboard
+Let's create a simple monitoring setup to track tenant activities.
+
+Create RBAC audit script:
+cat > rbac-audit.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Multi-Tenant RBAC Audit Report ==="
+echo "Generated on: $(date)"
+echo
+
+# Function to audit cluster
+audit_cluster() {
+    local cluster=$1
+    echo "=== Auditing $cluster ==="
+    kubectl config use-context $cluster
+    
+    echo "Namespaces:"
+    kubectl get namespaces --show-labels | grep tenant
+    
+    echo
+    echo "Service Accounts:"
+    kubectl get serviceaccounts -A | grep -E "(alpha-user|beta-user|shared-admin)"
+    
+    echo
+    echo "Roles:"
+    kubectl get roles -A | grep -E "(tenant-alpha-role|tenant-beta-role|shared-services-reader)"
+    
+    echo
+    echo "RoleBindings:"
+    kubectl get rolebindings -A | grep -E "(tenant-alpha-binding|tenant-beta-binding|shared-services)"
+    
+    echo
+    echo "ClusterRoleBindings:"
+    kubectl get clusterrolebindings | grep service-discovery
+    
+    echo
+    echo "Network Policies:"
+    kubectl get networkpolicies -A
+    
+    echo
+    echo "Running Pods by Tenant:"
+    kubectl get pods -A -l tenant=alpha
+    kubectl get pods -A -l tenant=beta
+    kubectl get pods -A -l tenant=shared
+    
+    echo "================================"
+    echo
+}
+
+# Audit both clusters
+audit_cluster cluster-a
+audit_cluster cluster-b
+
+echo "=== Access Validation Tests ==="
+
+# Test tenant access
+export KUBECONFIG=alpha-kubeconfig.yaml
+kubectl config use-context alpha-cluster-a
+echo "Tenant Alpha can access their namespace: $(kubectl get pods -n tenant-alpha --no-headers | wc -l) pods"
+
+export KUBECONFIG=beta-kubeconfig.yaml
+kubectl config use-context beta-cluster-a
+echo "Tenant Beta can access their namespace: $(kubectl get pods -n tenant-beta --no-headers | wc -l) pods"
+
+unset KUBECONFIG
+echo "Audit completed successfully!"
+EOF
+
+chmod +x rbac-audit.sh
+./rbac-audit.sh
+Create resource usage monitoring:
+cat > tenant-resource-monitor.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Multi-Tenant Resource Usage Report ==="
+echo "Generated on: $(date)"
+echo
+
+monitor_cluster() {
+    local cluster=$1
+    echo "=== Resource Usage in $cluster ==="
+    kubectl config use-context $cluster
+    
+    echo "Tenant Alpha Resources:"
+    kubectl top pods -n tenant-alpha 2>/dev/null || echo "Metrics not available"
+    kubectl get pods -n tenant-alpha -o wide
+    
+    echo
+    echo "Tenant Beta Resources:"
+    kubectl top pods -n tenant-beta 2>/dev/null || echo "Metrics not available"
+    kubectl get pods -n tenant-beta -o wide
+    
+    echo
+    echo "Shared Services Resources:"
+    kubectl top pods -n shared-services 2>/dev/null || echo "Metrics not available"
+    kubectl get pods -n shared-services -o wide
+    
+    echo "================================"
+    echo
+}
+
+monitor_cluster cluster-a
+monitor_cluster cluster-b
+
+echo "Resource monitoring completed!"
+EOF
+
+chmod +x tenant-resource-monitor.sh
+./tenant-resource-monitor.sh
+Troubleshooting Common Issues
+Issue 1: Service Account Token Not Found
+Problem: Error message "secrets not found" when extracting tokens.
+
+Solution:
+
+# For Kubernetes 1.24+, create tokens manually
+kubectl create token alpha-user -n tenant-alpha --duration=24h
+Issue 2: Permission Denied Errors
+Problem: Tenants cannot access their own resources.
+
+Solution:
+
+# Check role bindings
+kubectl get rolebindings -n tenant-alpha -o yaml
+
+# Verify service account exists
+kubectl get serviceaccounts -n tenant-alpha
+Issue 3: Network Policy Blocking Legitimate Traffic
+Problem: Pods cannot communicate with allowed services.
+
+Solution:
+
+# Check network policy configuration
+kubectl describe networkpolicy tenant-alpha-isolation -n tenant-alpha
+
+# Verify namespace labels
+kubectl get namespaces --show-labels
+Issue 4: Cross-Cluster Access Issues
+Problem: Cannot access resources in the second cluster.
+
+Solution:
+
+# Verify cluster contexts
+kubectl config get-contexts
+
+# Check if RBAC is applied to both clusters
+kubectl config use-context cluster-b
+kubectl get roles -A | grep tenant
+Validation Checklist
+Use this checklist to verify your multi-tenant setup:
+
+ Both clusters have tenant namespaces created
+ Service accounts exist in all namespaces
+ Roles are properly defined with appropriate permissions
+ Role bindings connect service accounts to roles
+ Tenant kubeconfig files work for both clusters
+ Tenants can create resources in their own namespaces
+ Tenants cannot access other tenants' resources
+ Tenants have read-only access to shared services
+ Network policies enforce tenant isolation
+ Cross-cluster access works for authorized tenants
+ Audit scripts provide visibility into tenant activities
+Conclusion
+Congratulations! You have successfully implemented a comprehensive multi-tenant RBAC system across multiple Kubernetes clusters. Here's what you accomplished:
+
+Key Achievements:
+
+Multi-Cluster RBAC Implementation: You configured Role-Based Access Control across two Kubernetes clusters, ensuring consistent security policies and access controls.
+
+Tenant Isolation: You created separate namespaces for different tenants (alpha and beta) and implemented strict access controls that prevent cross-tenant access while allowing access to shared services.
+
+Service Account Management: You established service accounts for each tenant and created secure token-based authentication that works across both clusters.
+
+Network Security: You implemented network policies that provide network-level isolation between tenants while maintaining necessary connectivity to shared services.
+
+Cross-Cluster Access: You enabled tenants to securely access their resources across multiple clusters using properly configured kubeconfig files.
+
+Monitoring and Auditing: You created monitoring scripts that provide visibility into tenant activities and resource usage across the multi-cluster environment.
+
+Why This Matters:
+
+Multi-tenant Kubernetes environments are essential for organizations that need to:
+
+Share infrastructure costs while maintaining security isolation
+Provide self-service capabilities to different teams or customers
+Ensure compliance with security and regulatory requirements
+Scale applications across multiple clusters for high availability
+The skills you've learned in this lab are directly applicable to real-world scenarios where organizations need to manage multiple teams, applications, or customers on shared Kubernetes infrastructure while maintaining strict security boundaries.
+
+Next Steps:
+
+Consider exploring advanced topics such as:
+
+Implementing admission controllers for additional security
+Setting up resource quotas and limits per tenant
+Integrating with external identity providers (LDAP, Active Directory)
+Implementing GitOps workflows for multi-tenant deployments
+Setting up monitoring and alerting for tenant activities
+This lab provides a solid foundation for managing complex multi-tenant Kubernetes environments in production settings.

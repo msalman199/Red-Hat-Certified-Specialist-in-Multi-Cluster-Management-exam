@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpha-web-app
+  namespace: tenant-alpha
+  labels:
+    app: alpha-web
+    tenant: alpha
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alpha-web
+  template:
+    metadata:
+      labels:
+        app: alpha-web
+        tenant: alpha
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        env:
+        - name: TENANT
+          value: "alpha"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpha-web-service
+  namespace: tenant-alpha
+  labels:
+    tenant: alpha
+spec:
+  selector:
+    app: alpha-web
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

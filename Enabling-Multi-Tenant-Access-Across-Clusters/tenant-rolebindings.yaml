@@ -1,0 +1,90 @@
+# Bind tenant-alpha service account to tenant-alpha role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-alpha-binding
+  namespace: tenant-alpha
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: Role
+  name: tenant-alpha-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind tenant-beta service account to tenant-beta role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-beta-binding
+  namespace: tenant-beta
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: Role
+  name: tenant-beta-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind both tenants to shared services reader role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shared-services-alpha-binding
+  namespace: shared-services
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: Role
+  name: shared-services-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shared-services-beta-binding
+  namespace: shared-services
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: Role
+  name: shared-services-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding for service discovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: service-discovery-alpha
+subjects:
+- kind: ServiceAccount
+  name: alpha-user
+  namespace: tenant-alpha
+roleRef:
+  kind: ClusterRole
+  name: service-discovery
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: service-discovery-beta
+subjects:
+- kind: ServiceAccount
+  name: beta-user
+  namespace: tenant-beta
+roleRef:
+  kind: ClusterRole
+  name: service-discovery
+  apiGroup: rbac.authorization.k8s.io
