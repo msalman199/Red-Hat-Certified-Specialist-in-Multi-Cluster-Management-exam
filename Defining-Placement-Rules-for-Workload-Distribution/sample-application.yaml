@@ -1,0 +1,28 @@
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: sample-web-application
+  namespace: placement-demo
+spec:
+  componentKinds:
+  - group: apps
+    kind: Deployment
+  descriptor: {}
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values: 
+      - sample-web-app
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: sample-app-subscription
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: east-coast-placement
+      kind: PlacementRule

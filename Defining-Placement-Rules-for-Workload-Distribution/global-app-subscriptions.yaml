@@ -1,0 +1,35 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-east
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-east-placement
+      kind: PlacementRule
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-west
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-west-placement
+      kind: PlacementRule
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-central
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-central-placement
+      kind: PlacementRule

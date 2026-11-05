@@ -1,0 +1,38 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-east-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-east
+  clusterReplicas: 2
+  resourceHint:
+    type: cpu
+    order: largest
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-west-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-west
+  clusterReplicas: 2
+  resourceHint:
+    type: memory
+    order: largest
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-central-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-central
+  clusterReplicas: 1

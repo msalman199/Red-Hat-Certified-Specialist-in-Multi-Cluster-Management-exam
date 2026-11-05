@@ -1,0 +1,21 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: canary-deployment-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: staging
+  clusterReplicas: 1
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: production-deployment-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+  clusterReplicas: 2

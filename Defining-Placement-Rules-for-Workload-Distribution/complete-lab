@@ -1,0 +1,591 @@
+Lab 11: Defining Placement Rules for Workload Distribution
+Objectives
+By the end of this lab, you will be able to:
+
+Understand the concept of placement rules in Red Hat Advanced Cluster Management (RHACM)
+Create and configure placement rules for optimal workload distribution across multiple clusters
+Implement cluster selectors and resource requirements for workload placement
+Test placement rules using both RHACM dashboard and CLI tools
+Monitor and validate workload distribution across managed clusters
+Troubleshoot common placement rule issues
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes concepts (pods, deployments, namespaces)
+Familiarity with YAML configuration files
+Knowledge of Red Hat Advanced Cluster Management fundamentals
+Experience with command-line interface operations
+Understanding of multi-cluster management concepts
+Required Knowledge Areas
+Kubernetes cluster architecture
+RHACM hub and managed cluster concepts
+Basic networking and resource management
+YAML syntax and structure
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+RHACM Hub cluster (pre-installed and configured)
+Three managed clusters (cluster-east, cluster-west, cluster-central)
+kubectl CLI tool
+oc CLI tool (OpenShift client)
+Pre-configured cluster connections
+Task 1: Understanding and Creating Basic Placement Rules
+Subtask 1.1: Explore Existing Cluster Information
+First, let's examine the available clusters and their labels to understand how placement rules work.
+
+Access your lab environment by clicking the terminal icon on your desktop.
+
+Verify cluster connectivity by listing all available clusters:
+
+oc get managedclusters
+Examine cluster labels to understand placement criteria:
+oc describe managedcluster cluster-east
+oc describe managedcluster cluster-west  
+oc describe managedcluster cluster-central
+Check cluster resource capacity:
+oc get managedcluster cluster-east -o yaml | grep -A 10 "status:"
+oc get managedcluster cluster-west -o yaml | grep -A 10 "status:"
+oc get managedcluster cluster-central -o yaml | grep -A 10 "status:"
+Subtask 1.2: Create Your First Placement Rule
+Now we'll create a basic placement rule that distributes workloads based on cluster location.
+
+Create a namespace for our placement rule examples:
+oc create namespace placement-demo
+Create a basic placement rule for east coast clusters:
+cat << EOF > basic-placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: east-coast-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: east
+  clusterReplicas: 1
+EOF
+Apply the placement rule:
+oc apply -f basic-placement-rule.yaml
+Verify the placement rule creation:
+oc get placementrule -n placement-demo
+oc describe placementrule east-coast-placement -n placement-demo
+Subtask 1.3: Create Advanced Placement Rules with Multiple Criteria
+Let's create more sophisticated placement rules using multiple selection criteria.
+
+Create a placement rule with resource requirements:
+cat << EOF > resource-based-placement.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: high-resource-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchExpressions:
+    - key: environment
+      operator: In
+      values: ["production", "staging"]
+    - key: node-count
+      operator: Gt
+      values: ["3"]
+  clusterReplicas: 2
+  resourceHint:
+    type: cpu
+    order: largest
+EOF
+Apply the advanced placement rule:
+oc apply -f resource-based-placement.yaml
+Create a placement rule for disaster recovery:
+cat << EOF > dr-placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: disaster-recovery-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      disaster-recovery: "enabled"
+  clusterReplicas: 3
+  tolerations:
+  - key: "cluster-maintenance"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+EOF
+Apply the disaster recovery placement rule:
+oc apply -f dr-placement-rule.yaml
+Task 2: Testing and Monitoring Placement Rules
+Subtask 2.1: Deploy Applications Using Placement Rules
+Now we'll test our placement rules by deploying applications that use them.
+
+Create a sample application deployment:
+cat << EOF > sample-app-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-web-app
+  namespace: placement-demo
+  labels:
+    app: sample-web-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sample-web-app
+  template:
+    metadata:
+      labels:
+        app: sample-web-app
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+EOF
+Create an Application resource that uses our placement rule:
+cat << EOF > sample-application.yaml
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: sample-web-application
+  namespace: placement-demo
+spec:
+  componentKinds:
+  - group: apps
+    kind: Deployment
+  descriptor: {}
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values: 
+      - sample-web-app
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: sample-app-subscription
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: east-coast-placement
+      kind: PlacementRule
+EOF
+Create a Channel for application distribution:
+cat << EOF > sample-app-channel.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: Channel
+metadata:
+  name: sample-app-channel
+  namespace: placement-demo
+spec:
+  type: Namespace
+  pathname: placement-demo
+EOF
+Apply all application resources:
+oc apply -f sample-app-deployment.yaml
+oc apply -f sample-app-channel.yaml
+oc apply -f sample-application.yaml
+Subtask 2.2: Monitor Placement Rules via CLI
+Let's monitor how our placement rules are working using command-line tools.
+
+Check placement rule status:
+oc get placementrule -n placement-demo -o wide
+Get detailed placement information:
+oc get placementrule east-coast-placement -n placement-demo -o yaml
+Monitor placement decisions:
+oc get placementdecision -n placement-demo
+oc describe placementdecision -n placement-demo
+Check subscription status:
+oc get subscription -n placement-demo
+oc describe subscription sample-app-subscription -n placement-demo
+Verify application deployment across clusters:
+# Check on each managed cluster
+oc --context=cluster-east get deployments -n placement-demo
+oc --context=cluster-west get deployments -n placement-demo
+oc --context=cluster-central get deployments -n placement-demo
+Subtask 2.3: Monitor Placement Rules via RHACM Dashboard
+Now let's use the RHACM web console to monitor our placement rules.
+
+Access the RHACM Console:
+
+Open your web browser
+Navigate to the RHACM console URL provided in your lab environment
+Log in with the provided credentials
+Navigate to Applications:
+
+Click on Applications in the left navigation menu
+Select Overview to see all applications
+Examine Application Topology:
+
+Click on your sample-web-application
+Review the Topology view to see cluster distribution
+Note which clusters have the application deployed
+Check Placement Rule Details:
+
+Navigate to Governance → Placement Rules
+Click on east-coast-placement
+Review the placement decisions and cluster selections
+Monitor Resource Usage:
+
+Go to Infrastructure → Clusters
+Select each cluster to view resource utilization
+Compare resource usage across clusters
+Subtask 2.4: Create Custom Monitoring Scripts
+Let's create some useful scripts to monitor placement rule effectiveness.
+
+Create a placement monitoring script:
+cat << 'EOF' > monitor-placement.sh
+#!/bin/bash
+
+echo "=== Placement Rule Monitoring Dashboard ==="
+echo "Date: $(date)"
+echo ""
+
+echo "1. Active Placement Rules:"
+oc get placementrule -A --no-headers | wc -l
+echo ""
+
+echo "2. Placement Rules by Namespace:"
+oc get placementrule -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,CLUSTERS:.status.numberOfSelectedClusters
+echo ""
+
+echo "3. Cluster Selection Summary:"
+for cluster in $(oc get managedclusters --no-headers -o custom-columns=NAME:.metadata.name); do
+    echo "Cluster: $cluster"
+    echo "  Labels: $(oc get managedcluster $cluster -o jsonpath='{.metadata.labels}' | tr ',' '\n' | grep -v '^{' | grep -v '^}' | head -3)"
+    echo "  Status: $(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}')"
+    echo ""
+done
+
+echo "4. Recent Placement Decisions:"
+oc get placementdecision -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,CLUSTERS:.status.decisions[*].clusterName
+EOF
+Make the script executable and run it:
+chmod +x monitor-placement.sh
+./monitor-placement.sh
+Create a workload distribution analysis script:
+cat << 'EOF' > analyze-distribution.sh
+#!/bin/bash
+
+echo "=== Workload Distribution Analysis ==="
+echo ""
+
+NAMESPACES=("placement-demo")
+
+for ns in "${NAMESPACES[@]}"; do
+    echo "Analyzing namespace: $ns"
+    echo "------------------------"
+    
+    # Get all deployments in the namespace
+    deployments=$(oc get deployments -n $ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null)
+    
+    if [ -z "$deployments" ]; then
+        echo "No deployments found in namespace $ns"
+        continue
+    fi
+    
+    for deployment in $deployments; do
+        echo "Deployment: $deployment"
+        
+        # Check deployment on each cluster
+        for cluster in $(oc get managedclusters --no-headers -o custom-columns=NAME:.metadata.name); do
+            replica_count=$(oc --context=$cluster get deployment $deployment -n $ns -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+            ready_count=$(oc --context=$cluster get deployment $deployment -n $ns -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            echo "  $cluster: $ready_count/$replica_count replicas ready"
+        done
+        echo ""
+    done
+done
+EOF
+Run the distribution analysis:
+chmod +x analyze-distribution.sh
+./analyze-distribution.sh
+Task 3: Advanced Placement Rule Scenarios
+Subtask 3.1: Implement Canary Deployment with Placement Rules
+Let's create a canary deployment strategy using placement rules.
+
+Create a canary placement rule:
+cat << EOF > canary-placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: canary-deployment-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: staging
+  clusterReplicas: 1
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: production-deployment-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+  clusterReplicas: 2
+EOF
+Apply the canary placement rules:
+oc apply -f canary-placement-rule.yaml
+Create a canary application version:
+cat << EOF > canary-app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-canary
+  namespace: placement-demo
+  labels:
+    app: web-app
+    version: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: web-app
+        version: canary
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.22
+        ports:
+        - containerPort: 80
+        env:
+        - name: VERSION
+          value: "canary"
+EOF
+Apply the canary application:
+oc apply -f canary-app.yaml
+Subtask 3.2: Implement Geographic Load Distribution
+Create placement rules for geographic load distribution.
+
+Create geographic placement rules:
+cat << EOF > geographic-placement.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-east-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-east
+  clusterReplicas: 2
+  resourceHint:
+    type: cpu
+    order: largest
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-west-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-west
+  clusterReplicas: 2
+  resourceHint:
+    type: memory
+    order: largest
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: us-central-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us-central
+  clusterReplicas: 1
+EOF
+Apply geographic placement rules:
+oc apply -f geographic-placement.yaml
+Create a global application with regional subscriptions:
+cat << EOF > global-app-subscriptions.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-east
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-east-placement
+      kind: PlacementRule
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-west
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-west-placement
+      kind: PlacementRule
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: global-app-central
+  namespace: placement-demo
+spec:
+  channel: placement-demo/sample-app-channel
+  placement:
+    placementRef:
+      name: us-central-placement
+      kind: PlacementRule
+EOF
+Apply the global application subscriptions:
+oc apply -f global-app-subscriptions.yaml
+Subtask 3.3: Test Placement Rule Failover
+Let's test how placement rules handle cluster failures.
+
+Create a failover-aware placement rule:
+cat << EOF > failover-placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: failover-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchExpressions:
+    - key: environment
+      operator: In
+      values: ["production"]
+  clusterReplicas: 3
+  tolerations:
+  - key: "cluster.open-cluster-management.io/unreachable"
+    operator: "Exists"
+    effect: "NoSelect"
+    tolerationSeconds: 300
+EOF
+Apply the failover placement rule:
+oc apply -f failover-placement-rule.yaml
+Create a monitoring script for failover testing:
+cat << 'EOF' > test-failover.sh
+#!/bin/bash
+
+echo "=== Failover Testing Script ==="
+echo "Monitoring placement decisions every 30 seconds..."
+echo "Press Ctrl+C to stop"
+echo ""
+
+while true; do
+    echo "$(date): Current placement decisions:"
+    oc get placementdecision -n placement-demo -o custom-columns=NAME:.metadata.name,CLUSTERS:.status.decisions[*].clusterName
+    echo ""
+    
+    echo "Cluster health status:"
+    oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status
+    echo "----------------------------------------"
+    
+    sleep 30
+done
+EOF
+Make the failover test script executable:
+chmod +x test-failover.sh
+Troubleshooting Common Issues
+Issue 1: Placement Rule Not Selecting Any Clusters
+Symptoms: PlacementRule shows 0 selected clusters
+
+Solution:
+
+# Check cluster labels
+oc get managedclusters --show-labels
+
+# Verify placement rule selector
+oc describe placementrule <placement-rule-name> -n <namespace>
+
+# Update cluster labels if needed
+oc label managedcluster <cluster-name> <key>=<value>
+Issue 2: Application Not Deploying to Selected Clusters
+Symptoms: Subscription exists but application not deployed
+
+Solution:
+
+# Check subscription status
+oc describe subscription <subscription-name> -n <namespace>
+
+# Verify channel exists
+oc get channel -n <namespace>
+
+# Check placement decision
+oc get placementdecision -n <namespace>
+Issue 3: Placement Rule Conflicts
+Symptoms: Multiple placement rules selecting same clusters
+
+Solution:
+
+# List all placement rules
+oc get placementrule -A
+
+# Check for overlapping selectors
+oc get placementrule -o yaml | grep -A 10 clusterSelector
+
+# Adjust selectors to be more specific
+Validation and Testing
+Validate Your Lab Completion
+Run these commands to verify your lab work:
+
+Check all placement rules created:
+oc get placementrule -n placement-demo
+Verify placement decisions:
+oc get placementdecision -n placement-demo -o yaml
+Confirm application distribution:
+./analyze-distribution.sh
+Test monitoring capabilities:
+./monitor-placement.sh
+Conclusion
+Congratulations! You have successfully completed Lab 11: Defining Placement Rules for Workload Distribution. In this comprehensive lab, you have accomplished the following:
+
+Key Achievements
+Placement Rule Mastery: You learned how to create and configure various types of placement rules, from basic cluster selection to advanced multi-criteria rules with resource requirements and geographic distribution.
+
+Practical Implementation: You successfully deployed real applications using placement rules, demonstrating how workload distribution works in practice across multiple clusters.
+
+Monitoring and Management: You developed skills in monitoring placement rules using both CLI tools and the RHACM dashboard, creating custom monitoring scripts for ongoing management.
+
+Advanced Scenarios: You implemented sophisticated deployment patterns including canary deployments, geographic load distribution, and failover scenarios.
+
+Why This Matters
+Production Readiness: The skills you've developed are directly applicable to production multi-cluster environments where optimal workload distribution is critical for performance, availability, and resource utilization.
+
+Operational Excellence: Your ability to monitor and troubleshoot placement rules ensures you can maintain healthy workload distribution in dynamic cluster environments.
+
+Strategic Value: Understanding placement rules enables you to implement advanced deployment strategies that improve application resilience, reduce latency, and optimize resource costs across your infrastructure.
+
+Career Development: These skills are essential for the Red Hat Certified Specialist in Multi Cluster Management exam and valuable for roles in cloud architecture, DevOps, and platform engineering.
+
+Next Steps
+Practice creating placement rules for different use cases in your own environment
+Explore integration with GitOps workflows for automated placement rule management
+Investigate advanced placement strategies for specific application architectures
+Consider how placement rules fit into your organization's disaster recovery and business continuity plans
+You now have the knowledge and practical experience to effectively manage workload distribution across multi-cluster environments using Red Hat Advanced Cluster Management placement rules.

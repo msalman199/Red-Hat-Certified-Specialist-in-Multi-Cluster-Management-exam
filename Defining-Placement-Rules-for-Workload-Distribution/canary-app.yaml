@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-canary
+  namespace: placement-demo
+  labels:
+    app: web-app
+    version: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: web-app
+        version: canary
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.22
+        ports:
+        - containerPort: 80
+        env:
+        - name: VERSION
+          value: "canary"

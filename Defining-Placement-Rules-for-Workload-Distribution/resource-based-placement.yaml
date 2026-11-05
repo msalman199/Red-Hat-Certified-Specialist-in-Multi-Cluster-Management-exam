@@ -1,0 +1,18 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: high-resource-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchExpressions:
+    - key: environment
+      operator: In
+      values: ["production", "staging"]
+    - key: node-count
+      operator: Gt
+      values: ["3"]
+  clusterReplicas: 2
+  resourceHint:
+    type: cpu
+    order: largest

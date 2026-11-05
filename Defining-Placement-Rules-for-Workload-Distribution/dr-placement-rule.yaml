@@ -1,0 +1,15 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: disaster-recovery-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchLabels:
+      disaster-recovery: "enabled"
+  clusterReplicas: 3
+  tolerations:
+  - key: "cluster-maintenance"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"

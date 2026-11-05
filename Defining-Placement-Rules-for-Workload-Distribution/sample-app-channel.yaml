@@ -1,0 +1,8 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: Channel
+metadata:
+  name: sample-app-channel
+  namespace: placement-demo
+spec:
+  type: Namespace
+  pathname: placement-demo

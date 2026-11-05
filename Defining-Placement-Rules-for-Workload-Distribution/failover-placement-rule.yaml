@@ -1,0 +1,17 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: failover-placement
+  namespace: placement-demo
+spec:
+  clusterSelector:
+    matchExpressions:
+    - key: environment
+      operator: In
+      values: ["production"]
+  clusterReplicas: 3
+  tolerations:
+  - key: "cluster.open-cluster-management.io/unreachable"
+    operator: "Exists"
+    effect: "NoSelect"
+    tolerationSeconds: 300
