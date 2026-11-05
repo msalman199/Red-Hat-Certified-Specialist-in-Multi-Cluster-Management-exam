@@ -1,0 +1,171 @@
+---
+- name: Application lifecycle management
+  hosts: local
+  gather_facts: no
+  vars:
+    app_name: "{{ app_name | default('sample-web-app') }}"
+    app_namespace: "{{ app_namespace | default('applications') }}"
+    operation: "{{ operation | default('deploy') }}"
+    app_image: "{{ app_image | default('nginx:1.25') }}"
+    replicas: "{{ replicas | default(2) }}"
+
+  tasks:
+    - name: Display operation information
+      debug:
+        msg: "Performing {{ operation }} for {{ app_name }} in {{ app_namespace }}"
+
+    - name: Ensure application namespace exists
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        state: present
+      when: operation == "deploy"
+
+    - name: Deploy application ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ app_name }}-config"
+            namespace: "{{ app_namespace }}"
+          data:
+            app.name: "{{ app_name }}"
+            app.version: "1.0.0"
+      when: operation in ["deploy", "update"]
+
+    - name: Deploy application Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ app_namespace }}"
+            labels:
+              app: "{{ app_name }}"
+          spec:
+            replicas: "{{ replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ app_name }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ app_name }}"
+              spec:
+                containers:
+                  - name: web-app
+                    image: "{{ app_image }}"
+                    ports:
+                      - containerPort: 80
+                    resources:
+                      requests:
+                        memory: "128Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "256Mi"
+                        cpu: "200m"
+                    readinessProbe:
+                      httpGet:
+                        path: /
+                        port: 80
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+      when: operation in ["deploy", "update"]
+
+    - name: Create application service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ app_name }}-service"
+            namespace: "{{ app_namespace }}"
+          spec:
+            selector:
+              app: "{{ app_name }}"
+            ports:
+              - port: 80
+                targetPort: 80
+            type: ClusterIP
+      when: operation in ["deploy", "update"]
+
+    - name: Wait for application deployment to be available
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 120
+      when: operation in ["deploy", "update"]
+      register: app_wait_result
+      ignore_errors: yes
+
+    - name: Fail if application deployment did not become ready
+      fail:
+        msg: "Application {{ app_name }} did not become Available within timeout"
+      when: operation in ["deploy", "update"] and app_wait_result is failed
+
+    - name: Scale application deployment
+      kubernetes.core.k8s:
+        state: present
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        definition:
+          spec:
+            replicas: "{{ replicas }}"
+      when: operation == "scale"
+
+    - name: Delete application service
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Service
+        name: "{{ app_name }}-service"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+      ignore_errors: yes
+
+    - name: Delete application deployment
+      kubernetes.core.k8s:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+
+    - name: Delete application ConfigMap
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: ConfigMap
+        name: "{{ app_name }}-config"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+      ignore_errors: yes
+
+    - name: Report final application status
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+      register: final_status
+      when: operation != "delete"
+
+    - name: Show application replica status
+      debug:
+        msg: "{{ app_name }} has {{ final_status.resources[0].status.replicas | default(0) }} replicas, {{ final_status.resources[0].status.readyReplicas | default(0) }} ready"
+      when: operation != "delete" and final_status.resources | default([]) | length > 0

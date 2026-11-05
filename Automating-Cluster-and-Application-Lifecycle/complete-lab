@@ -1,0 +1,525 @@
+Lab: Automating Cluster and Application Lifecycle with oc, kubectl, and Ansible
+Objectives
+By the end of this lab, you will be able to:
+
+Use oc CLI and kubectl commands to automate OpenShift/Kubernetes resource operations
+Implement Ansible playbooks to manage the lifecycle of a namespace-scoped workload
+Automate creation, scaling, and safe teardown of a deployment using shell scripts
+Deploy and manage a sample application through Ansible-driven automation
+Verify automation results using CLI status and query commands
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes/OpenShift concepts (Pods, Deployments, Services)
+Familiarity with command-line interface operations and shell scripting
+Knowledge of YAML syntax and structure
+Access to a Kubernetes or OpenShift cluster (a local cluster such as kind, minikube, or a lab-provided OpenShift sandbox is sufficient) with oc or kubectl configured against it
+Install the required tools on your practice machine:
+
+# Ansible and the Kubernetes collection
+pip install --user ansible
+ansible-galaxy collection install kubernetes.core
+
+# Python Kubernetes client (required by the kubernetes.core modules)
+pip install --user kubernetes
+
+# Verify kubectl is installed and configured
+kubectl version --client
+
+# If using OpenShift, verify oc is installed
+oc version --client
+This lab assumes kubectl (or oc, which is a superset of kubectl) is already authenticated against a working cluster. All examples use kubectl; if you are on OpenShift, you may substitute oc for kubectl in every command.
+
+Task 1: Automate Deployment Creation, Scaling, and Termination with Shell Scripts
+Step 1: Set Up the Working Directory and Environment Variables
+mkdir -p ~/cluster-automation-lab/{scripts,ansible-playbooks,applications}
+cd ~/cluster-automation-lab
+
+cat > configs-env.sh << 'EOF'
+#!/bin/bash
+export DEMO_NAMESPACE="cluster-demo"
+export DEMO_APP="demo-manager"
+export APP_NAMESPACE="applications"
+export APP_NAME="sample-web-app"
+EOF
+mkdir -p configs
+mv configs-env.sh configs/env-config.sh
+chmod +x configs/env-config.sh
+source configs/env-config.sh
+
+echo "Namespace variables: ${DEMO_NAMESPACE}, ${APP_NAMESPACE}"
+Deliverable: Running source configs/env-config.sh && echo $DEMO_NAMESPACE prints cluster-demo.
+
+Step 2: Create the Cluster Resource Creation Script
+cat > scripts/create-resources.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+source ~/cluster-automation-lab/configs/env-config.sh
+
+echo "Creating namespace ${DEMO_NAMESPACE}..."
+kubectl create namespace "${DEMO_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+echo "Applying ConfigMap and Deployment..."
+cat <<YAML | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-config
+  namespace: ${DEMO_NAMESPACE}
+data:
+  environment: "lab"
+  managed-by: "automation-script"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${DEMO_APP}
+  namespace: ${DEMO_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${DEMO_APP}
+  template:
+    metadata:
+      labels:
+        app: ${DEMO_APP}
+    spec:
+      containers:
+      - name: manager
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${DEMO_APP}-service
+  namespace: ${DEMO_NAMESPACE}
+spec:
+  selector:
+    app: ${DEMO_APP}
+  ports:
+  - port: 8080
+    targetPort: 80
+  type: ClusterIP
+YAML
+
+echo "Waiting for deployment to become available..."
+kubectl rollout status deployment/${DEMO_APP} -n "${DEMO_NAMESPACE}" --timeout=120s
+
+echo "Current resources:"
+kubectl get all -n "${DEMO_NAMESPACE}"
+EOF
+chmod +x scripts/create-resources.sh
+
+./scripts/create-resources.sh
+Deliverable: The script completes without error and the final kubectl get all -n cluster-demo output shows one Deployment (demo-manager), one ReplicaSet, one Pod in Running state, and one Service (demo-manager-service).
+
+Step 3: Create the Scaling Script
+cat > scripts/scale-resources.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+source ~/cluster-automation-lab/configs/env-config.sh
+
+REPLICAS=${1:?Usage: scale-resources.sh <replica-count>}
+
+echo "Scaling ${DEMO_APP} to ${REPLICAS} replicas..."
+kubectl scale deployment/${DEMO_APP} --replicas="${REPLICAS}" -n "${DEMO_NAMESPACE}"
+
+kubectl rollout status deployment/${DEMO_APP} -n "${DEMO_NAMESPACE}" --timeout=120s
+
+echo "Current replica status:"
+kubectl get deployment "${DEMO_APP}" -n "${DEMO_NAMESPACE}"
+kubectl get pods -n "${DEMO_NAMESPACE}" -l app=${DEMO_APP}
+EOF
+chmod +x scripts/scale-resources.sh
+
+./scripts/scale-resources.sh 3
+Deliverable: kubectl get deployment demo-manager -n cluster-demo shows READY 3/3.
+
+Step 4: Create the Termination Script
+cat > scripts/terminate-resources.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+source ~/cluster-automation-lab/configs/env-config.sh
+
+read -p "Delete all resources in namespace ${DEMO_NAMESPACE}? (yes/no): " confirm
+if [ "${confirm}" != "yes" ]; then
+    echo "Termination cancelled."
+    exit 0
+fi
+
+echo "Scaling deployment to 0 before removal..."
+kubectl scale deployment/${DEMO_APP} --replicas=0 -n "${DEMO_NAMESPACE}" || true
+
+echo "Deleting all resources in ${DEMO_NAMESPACE}..."
+kubectl delete all --all -n "${DEMO_NAMESPACE}"
+kubectl delete configmap demo-config -n "${DEMO_NAMESPACE}" --ignore-not-found
+
+echo "Remaining resources:"
+kubectl get all -n "${DEMO_NAMESPACE}"
+EOF
+chmod +x scripts/terminate-resources.sh
+Do not run this script yet; it will be used for cleanup at the end of the lab.
+
+Deliverable: The script exists, is executable, and prompts for confirmation before deleting anything (verify with bash -n scripts/terminate-resources.sh to confirm valid syntax without executing it).
+
+Task 2: Manage Cluster Lifecycle with an Ansible Playbook
+Step 1: Create the Ansible Inventory and Configuration
+cd ~/cluster-automation-lab/ansible-playbooks
+
+cat > inventory.ini << 'EOF'
+[local]
+localhost ansible_connection=local ansible_python_interpreter=auto_silent
+EOF
+
+cat > ansible.cfg << 'EOF'
+[defaults]
+inventory = inventory.ini
+host_key_checking = False
+stdout_callback = yaml
+gathering = smart
+EOF
+Deliverable: ansible-inventory --list (run from this directory) prints localhost under the local group with no errors.
+
+Step 2: Create the Cluster Lifecycle Playbook
+cat > cluster-lifecycle.yml << 'EOF'
+---
+- name: Cluster resource lifecycle management
+  hosts: local
+  gather_facts: no
+  vars:
+    namespace: "{{ namespace | default('cluster-demo') }}"
+    app_name: "{{ app_name | default('demo-manager') }}"
+    operation: "{{ operation | default('create') }}"
+    replicas: "{{ replicas | default(1) }}"
+
+  tasks:
+    - name: Display requested operation
+      debug:
+        msg: "Operation '{{ operation }}' requested for {{ app_name }} in {{ namespace }}"
+
+    - name: Ensure namespace exists
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ namespace }}"
+        state: present
+      when: operation == "create"
+
+    - name: Create or update deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ app_name }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ app_name }}"
+              spec:
+                containers:
+                  - name: manager
+                    image: nginx:1.25
+                    ports:
+                      - containerPort: 80
+                    resources:
+                      requests:
+                        memory: "64Mi"
+                        cpu: "50m"
+                      limits:
+                        memory: "128Mi"
+                        cpu: "100m"
+      when: operation in ["create", "scale"]
+
+    - name: Wait for deployment to become available
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 120
+      when: operation in ["create", "scale"]
+      register: wait_result
+      ignore_errors: yes
+
+    - name: Fail loudly if deployment did not become available
+      fail:
+        msg: "Deployment {{ app_name }} did not reach Available state within timeout"
+      when: operation in ["create", "scale"] and wait_result is failed
+
+    - name: Delete deployment
+      kubernetes.core.k8s:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+        state: absent
+      when: operation == "delete"
+
+    - name: Report current deployment status
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+      register: current_status
+      when: operation != "delete"
+
+    - name: Show current replica count
+      debug:
+        msg: "{{ app_name }} has {{ current_status.resources[0].status.replicas | default(0) }} replicas"
+      when: operation != "delete" and current_status.resources | default([]) | length > 0
+EOF
+Step 3: Run the Playbook for Create and Scale Operations
+# Create the deployment via Ansible (targets a separate namespace to avoid clashing with Task 1)
+ansible-playbook cluster-lifecycle.yml -e "operation=create namespace=cluster-demo-ansible app_name=demo-manager replicas=1"
+
+# Scale it up
+ansible-playbook cluster-lifecycle.yml -e "operation=scale namespace=cluster-demo-ansible app_name=demo-manager replicas=2"
+
+# Verify
+kubectl get deployment demo-manager -n cluster-demo-ansible
+Deliverable: Playbook run ends with PLAY RECAP showing failed=0, and kubectl get deployment demo-manager -n cluster-demo-ansible shows READY 2/2.
+
+Task 3: Automate Application Deployment with Ansible
+Step 1: Create the Application Manifest Variables
+mkdir -p ~/cluster-automation-lab/applications
+Step 2: Create the Application Lifecycle Playbook
+cat > ~/cluster-automation-lab/ansible-playbooks/application-lifecycle.yml << 'EOF'
+---
+- name: Application lifecycle management
+  hosts: local
+  gather_facts: no
+  vars:
+    app_name: "{{ app_name | default('sample-web-app') }}"
+    app_namespace: "{{ app_namespace | default('applications') }}"
+    operation: "{{ operation | default('deploy') }}"
+    app_image: "{{ app_image | default('nginx:1.25') }}"
+    replicas: "{{ replicas | default(2) }}"
+
+  tasks:
+    - name: Display operation information
+      debug:
+        msg: "Performing {{ operation }} for {{ app_name }} in {{ app_namespace }}"
+
+    - name: Ensure application namespace exists
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        state: present
+      when: operation == "deploy"
+
+    - name: Deploy application ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ app_name }}-config"
+            namespace: "{{ app_namespace }}"
+          data:
+            app.name: "{{ app_name }}"
+            app.version: "1.0.0"
+      when: operation in ["deploy", "update"]
+
+    - name: Deploy application Deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ app_namespace }}"
+            labels:
+              app: "{{ app_name }}"
+          spec:
+            replicas: "{{ replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ app_name }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ app_name }}"
+              spec:
+                containers:
+                  - name: web-app
+                    image: "{{ app_image }}"
+                    ports:
+                      - containerPort: 80
+                    resources:
+                      requests:
+                        memory: "128Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "256Mi"
+                        cpu: "200m"
+                    readinessProbe:
+                      httpGet:
+                        path: /
+                        port: 80
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+      when: operation in ["deploy", "update"]
+
+    - name: Create application service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ app_name }}-service"
+            namespace: "{{ app_namespace }}"
+          spec:
+            selector:
+              app: "{{ app_name }}"
+            ports:
+              - port: 80
+                targetPort: 80
+            type: ClusterIP
+      when: operation in ["deploy", "update"]
+
+    - name: Wait for application deployment to be available
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 120
+      when: operation in ["deploy", "update"]
+      register: app_wait_result
+      ignore_errors: yes
+
+    - name: Fail if application deployment did not become ready
+      fail:
+        msg: "Application {{ app_name }} did not become Available within timeout"
+      when: operation in ["deploy", "update"] and app_wait_result is failed
+
+    - name: Scale application deployment
+      kubernetes.core.k8s:
+        state: present
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        definition:
+          spec:
+            replicas: "{{ replicas }}"
+      when: operation == "scale"
+
+    - name: Delete application service
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Service
+        name: "{{ app_name }}-service"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+      ignore_errors: yes
+
+    - name: Delete application deployment
+      kubernetes.core.k8s:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+
+    - name: Delete application ConfigMap
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: ConfigMap
+        name: "{{ app_name }}-config"
+        namespace: "{{ app_namespace }}"
+        state: absent
+      when: operation == "delete"
+      ignore_errors: yes
+
+    - name: Report final application status
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ app_namespace }}"
+      register: final_status
+      when: operation != "delete"
+
+    - name: Show application replica status
+      debug:
+        msg: "{{ app_name }} has {{ final_status.resources[0].status.replicas | default(0) }} replicas, {{ final_status.resources[0].status.readyReplicas | default(0) }} ready"
+      when: operation != "delete" and final_status.resources | default([]) | length > 0
+EOF
+Step 3: Deploy, Update, and Clean Up the Application
+cd ~/cluster-automation-lab/ansible-playbooks
+
+# Deploy the application
+ansible-playbook application-lifecycle.yml -e "operation=deploy app_namespace=applications app_name=sample-web-app replicas=2"
+
+# Verify deployment
+kubectl get deployment sample-web-app -n applications
+kubectl get svc sample-web-app-service -n applications
+
+# Scale the application
+ansible-playbook application-lifecycle.yml -e "operation=scale app_namespace=applications app_name=sample-web-app replicas=1"
+kubectl get deployment sample-web-app -n applications
+
+# Clean up: delete the application entirely
+ansible-playbook application-lifecycle.yml -e "operation=delete app_namespace=applications app_name=sample-web-app"
+kubectl get deployment sample-web-app -n applications 2>&1 || echo "Deployment successfully removed"
+Deliverable: The deploy run's PLAY RECAP shows failed=0 and kubectl get svc sample-web-app-service -n applications lists the service with TYPE ClusterIP and PORT 80. After the delete run, kubectl get deployment sample-web-app -n applications returns a "not found" error, confirming clean removal.
+
+Step 4: Clean Up All Remaining Resources
+# Remove Task 1 resources
+~/cluster-automation-lab/scripts/terminate-resources.sh
+
+# Remove Task 2 Ansible-managed namespace
+cd ~/cluster-automation-lab/ansible-playbooks
+ansible-playbook cluster-lifecycle.yml -e "operation=delete namespace=cluster-demo-ansible app_name=demo-manager"
+kubectl delete namespace cluster-demo-ansible --ignore-not-found
+kubectl delete namespace applications --ignore-not-found
+Deliverable: kubectl get namespaces no longer lists cluster-demo, cluster-demo-ansible, or applications (namespace deletion may take a few seconds to finish terminating).
+
+Expected Outcomes
+You have working shell scripts that create, scale, and safely tear down a Kubernetes Deployment and Service
+You have two idempotent Ansible playbooks, driven entirely by -e variables, that manage a cluster-scoped resource and an application resource through deploy/scale/delete operations
+You can confirm success at each stage using kubectl get and Ansible's PLAY RECAP output rather than assuming success
+Troubleshooting
+Issue 1: ansible-playbook fails with an error mentioning kubernetes.core module not found. Diagnostic hint: Run ansible-galaxy collection list | grep kubernetes.core to confirm the collection is installed for the same Python environment ansible-playbook is using; reinstall with ansible-galaxy collection install kubernetes.core --force if missing.
+
+Issue 2: A deployment never reaches Available and the "wait" task times out. Diagnostic hint: Run kubectl describe pod -l app=<app_name> -n <namespace> and check the Events section for image pull errors or insufficient resource quota before rerunning the playbook.
+
+Conclusion
+In this lab you automated the full lifecycle of both a generic cluster workload and a sample application using two complementary approaches: shell scripts wrapping kubectl/oc commands, and idempotent Ansible playbooks built on the kubernetes.core collection. You practiced creating, scaling, and deleting Deployments and Services, added explicit wait and failure conditions to the playbooks so automation runs verifiably succeed or fail, and confirmed every operation with concrete kubectl get and Ansible recap checks rather than assuming success. These patterns of scripted creation, variable-driven Ansible operations, and explicit verification are the same building blocks used in production GitOps and cluster-lifecycle automation pipelines.

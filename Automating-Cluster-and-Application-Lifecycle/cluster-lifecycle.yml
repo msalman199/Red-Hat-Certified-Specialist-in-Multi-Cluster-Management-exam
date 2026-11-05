@@ -1,0 +1,98 @@
+---
+- name: Cluster resource lifecycle management
+  hosts: local
+  gather_facts: no
+  vars:
+    namespace: "{{ namespace | default('cluster-demo') }}"
+    app_name: "{{ app_name | default('demo-manager') }}"
+    operation: "{{ operation | default('create') }}"
+    replicas: "{{ replicas | default(1) }}"
+
+  tasks:
+    - name: Display requested operation
+      debug:
+        msg: "Operation '{{ operation }}' requested for {{ app_name }} in {{ namespace }}"
+
+    - name: Ensure namespace exists
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ namespace }}"
+        state: present
+      when: operation == "create"
+
+    - name: Create or update deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ replicas }}"
+            selector:
+              matchLabels:
+                app: "{{ app_name }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ app_name }}"
+              spec:
+                containers:
+                  - name: manager
+                    image: nginx:1.25
+                    ports:
+                      - containerPort: 80
+                    resources:
+                      requests:
+                        memory: "64Mi"
+                        cpu: "50m"
+                      limits:
+                        memory: "128Mi"
+                        cpu: "100m"
+      when: operation in ["create", "scale"]
+
+    - name: Wait for deployment to become available
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 120
+      when: operation in ["create", "scale"]
+      register: wait_result
+      ignore_errors: yes
+
+    - name: Fail loudly if deployment did not become available
+      fail:
+        msg: "Deployment {{ app_name }} did not reach Available state within timeout"
+      when: operation in ["create", "scale"] and wait_result is failed
+
+    - name: Delete deployment
+      kubernetes.core.k8s:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+        state: absent
+      when: operation == "delete"
+
+    - name: Report current deployment status
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ app_name }}"
+        namespace: "{{ namespace }}"
+      register: current_status
+      when: operation != "delete"
+
+    - name: Show current replica count
+      debug:
+        msg: "{{ app_name }} has {{ current_status.resources[0].status.replicas | default(0) }} replicas"
+      when: operation != "delete" and current_status.resources | default([]) | length > 0
