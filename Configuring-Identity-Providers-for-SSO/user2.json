@@ -1,0 +1,14 @@
+{
+  "username": "testuser2",
+  "enabled": true,
+  "firstName": "Test",
+  "lastName": "User Two",
+  "email": "testuser2@example.com",
+  "credentials": [
+    {
+      "type": "password",
+      "value": "RedHat123!",
+      "temporary": false
+    }
+  ]
+}

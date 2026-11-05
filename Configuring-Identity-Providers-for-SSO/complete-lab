@@ -1,0 +1,549 @@
+Lab 15: Configuring Identity Providers for SSO
+Objectives
+By the end of this lab, students will be able to:
+
+Understand the fundamentals of Single Sign-On (SSO) and identity providers
+Configure Keycloak as a centralized identity provider
+Set up OpenShift clusters to use external identity providers
+Implement OIDC (OpenID Connect) authentication across multiple clusters
+Test and validate SSO functionality in a multi-cluster environment
+Troubleshoot common SSO configuration issues
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes and OpenShift concepts
+Familiarity with YAML configuration files
+Knowledge of authentication and authorization concepts
+Experience with command-line interface operations
+Understanding of networking concepts (DNS, ports, certificates)
+Required Knowledge Areas:
+OpenShift cluster administration
+Basic LDAP/Active Directory concepts
+HTTP/HTTPS protocols
+Certificate management basics
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines for this lab. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Environment Details:
+Operating System: Red Hat Enterprise Linux 8
+Pre-installed Tools: OpenShift CLI (oc), kubectl, curl, wget, vim
+Network Configuration: Multi-cluster setup with proper DNS resolution
+Access Method: Web-based terminal and browser access
+Task 1: Set up Identity Providers for Centralized Authentication
+Subtask 1.1: Deploy Keycloak Identity Provider
+First, we'll deploy Keycloak as our centralized identity provider.
+
+Step 1: Create Keycloak Namespace
+# Create a dedicated namespace for Keycloak
+oc new-project keycloak-system
+
+# Verify namespace creation
+oc get projects | grep keycloak
+Step 2: Deploy Keycloak Operator
+# Create the operator subscription
+cat << EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: keycloak-operator
+  namespace: keycloak-system
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: keycloak-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+EOF
+Step 3: Wait for Operator Installation
+# Check operator installation status
+oc get csv -n keycloak-system
+
+# Wait for the operator to be ready (this may take 2-3 minutes)
+oc wait --for=condition=Succeeded csv -l operators.coreos.com/keycloak-operator.keycloak-system -n keycloak-system --timeout=300s
+Step 4: Deploy Keycloak Instance
+# Create Keycloak instance
+cat << EOF | oc apply -f -
+apiVersion: keycloak.org/v1alpha1
+kind: Keycloak
+metadata:
+  name: keycloak-sso
+  namespace: keycloak-system
+spec:
+  instances: 1
+  externalAccess:
+    enabled: true
+  podDisruptionBudget:
+    enabled: true
+EOF
+Step 5: Verify Keycloak Deployment
+# Check Keycloak pod status
+oc get pods -n keycloak-system
+
+# Get Keycloak route
+oc get routes -n keycloak-system
+
+# Wait for Keycloak to be ready
+oc wait --for=condition=Ready keycloak/keycloak-sso -n keycloak-system --timeout=600s
+Subtask 1.2: Configure Keycloak Realm and Client
+Step 1: Access Keycloak Admin Console
+# Get Keycloak admin credentials
+KEYCLOAK_USER=$(oc get secret credential-keycloak-sso -n keycloak-system -o jsonpath='{.data.ADMIN_USERNAME}' | base64 -d)
+KEYCLOAK_PASSWORD=$(oc get secret credential-keycloak-sso -n keycloak-system -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d)
+
+# Get Keycloak URL
+KEYCLOAK_URL=$(oc get route keycloak -n keycloak-system -o jsonpath='{.spec.host}')
+
+echo "Keycloak Admin Console: https://$KEYCLOAK_URL"
+echo "Username: $KEYCLOAK_USER"
+echo "Password: $KEYCLOAK_PASSWORD"
+Step 2: Create Keycloak Realm via API
+# Create a new realm for OpenShift authentication
+cat << EOF > openshift-realm.json
+{
+  "realm": "openshift",
+  "enabled": true,
+  "displayName": "OpenShift SSO Realm",
+  "loginTheme": "keycloak",
+  "accountTheme": "keycloak",
+  "adminTheme": "keycloak",
+  "emailTheme": "keycloak",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true
+}
+EOF
+
+# Get access token
+ACCESS_TOKEN=$(curl -s -X POST "https://$KEYCLOAK_URL/auth/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=$KEYCLOAK_USER" \
+  -d "password=$KEYCLOAK_PASSWORD" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" | jq -r '.access_token')
+
+# Create the realm
+curl -s -X POST "https://$KEYCLOAK_URL/auth/admin/realms" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @openshift-realm.json
+Step 3: Create OpenShift Client
+# Create OpenShift client configuration
+cat << EOF > openshift-client.json
+{
+  "clientId": "openshift",
+  "name": "OpenShift Console",
+  "description": "OpenShift Console Client",
+  "enabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "secret": "openshift-client-secret",
+  "redirectUris": [
+    "https://oauth-openshift.apps.*/*",
+    "https://console-openshift-console.apps.*/*"
+  ],
+  "webOrigins": [
+    "https://oauth-openshift.apps.*",
+    "https://console-openshift-console.apps.*"
+  ],
+  "protocol": "openid-connect",
+  "attributes": {
+    "saml.assertion.signature": "false",
+    "saml.force.post.binding": "false",
+    "saml.multivalued.roles": "false",
+    "saml.encrypt": "false",
+    "saml.server.signature": "false",
+    "saml.server.signature.keyinfo.ext": "false",
+    "exclude.session.state.from.auth.response": "false",
+    "saml_force_name_id_format": "false",
+    "saml.client.signature": "false",
+    "tls.client.certificate.bound.access.tokens": "false",
+    "saml.authnstatement": "false",
+    "display.on.consent.screen": "false",
+    "saml.onetimeuse.condition": "false"
+  },
+  "authenticationFlowBindingOverrides": {},
+  "fullScopeAllowed": true,
+  "nodeReRegistrationTimeout": -1,
+  "defaultClientScopes": [
+    "web-origins",
+    "role_list",
+    "profile",
+    "roles",
+    "email"
+  ],
+  "optionalClientScopes": [
+    "address",
+    "phone",
+    "offline_access",
+    "microprofile-jwt"
+  ]
+}
+EOF
+
+# Create the client
+curl -s -X POST "https://$KEYCLOAK_URL/auth/admin/realms/openshift/clients" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @openshift-client.json
+Subtask 1.3: Create Test Users
+Step 1: Create Test Users in Keycloak
+# Create first test user
+cat << EOF > user1.json
+{
+  "username": "testuser1",
+  "enabled": true,
+  "firstName": "Test",
+  "lastName": "User One",
+  "email": "testuser1@example.com",
+  "credentials": [
+    {
+      "type": "password",
+      "value": "RedHat123!",
+      "temporary": false
+    }
+  ]
+}
+EOF
+
+# Create second test user
+cat << EOF > user2.json
+{
+  "username": "testuser2",
+  "enabled": true,
+  "firstName": "Test",
+  "lastName": "User Two",
+  "email": "testuser2@example.com",
+  "credentials": [
+    {
+      "type": "password",
+      "value": "RedHat123!",
+      "temporary": false
+    }
+  ]
+}
+EOF
+
+# Create the users
+curl -s -X POST "https://$KEYCLOAK_URL/auth/admin/realms/openshift/users" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @user1.json
+
+curl -s -X POST "https://$KEYCLOAK_URL/auth/admin/realms/openshift/users" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @user2.json
+Step 2: Verify User Creation
+# List users in the realm
+curl -s -X GET "https://$KEYCLOAK_URL/auth/admin/realms/openshift/users" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq '.[] | {username: .username, email: .email}'
+Task 2: Test SSO Configuration Across Multi-Cluster Environments
+Subtask 2.1: Configure Primary OpenShift Cluster
+Step 1: Get Cluster Information
+# Switch to primary cluster context
+oc config use-context cluster1
+
+# Verify cluster access
+oc whoami --show-server
+oc get nodes
+Step 2: Configure OAuth Identity Provider
+# Get the current OAuth configuration
+oc get oauth cluster -o yaml > oauth-backup.yaml
+
+# Create OAuth configuration with Keycloak
+cat << EOF | oc apply -f -
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+  - name: keycloak-sso
+    mappingMethod: claim
+    type: OpenID
+    openID:
+      clientID: openshift
+      clientSecret:
+        name: keycloak-client-secret
+      issuer: https://$KEYCLOAK_URL/auth/realms/openshift
+      claims:
+        preferredUsername:
+        - preferred_username
+        name:
+        - name
+        email:
+        - email
+        groups:
+        - groups
+EOF
+Step 3: Create Client Secret
+# Create secret for Keycloak client
+oc create secret generic keycloak-client-secret \
+  --from-literal=clientSecret=openshift-client-secret \
+  -n openshift-config
+
+# Verify secret creation
+oc get secret keycloak-client-secret -n openshift-config
+Step 4: Wait for OAuth Pods to Restart
+# Monitor OAuth pod restart
+oc get pods -n openshift-authentication -w
+
+# Wait for pods to be ready
+oc wait --for=condition=Ready pods -l app=oauth-openshift -n openshift-authentication --timeout=300s
+Subtask 2.2: Configure Secondary OpenShift Cluster
+Step 1: Switch to Secondary Cluster
+# Switch to secondary cluster context
+oc config use-context cluster2
+
+# Verify cluster access
+oc whoami --show-server
+oc get nodes
+Step 2: Apply Same OAuth Configuration
+# Create the same OAuth configuration for cluster2
+cat << EOF | oc apply -f -
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+  - name: keycloak-sso
+    mappingMethod: claim
+    type: OpenID
+    openID:
+      clientID: openshift
+      clientSecret:
+        name: keycloak-client-secret
+      issuer: https://$KEYCLOAK_URL/auth/realms/openshift
+      claims:
+        preferredUsername:
+        - preferred_username
+        name:
+        - name
+        email:
+        - email
+        groups:
+        - groups
+EOF
+
+# Create client secret
+oc create secret generic keycloak-client-secret \
+  --from-literal=clientSecret=openshift-client-secret \
+  -n openshift-config
+Step 3: Update Keycloak Client Redirect URIs
+# Get cluster2 OAuth route
+CLUSTER2_OAUTH_URL=$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')
+CLUSTER2_CONSOLE_URL=$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')
+
+echo "Cluster2 OAuth URL: https://$CLUSTER2_OAUTH_URL"
+echo "Cluster2 Console URL: https://$CLUSTER2_CONSOLE_URL"
+Subtask 2.3: Test SSO Authentication
+Step 1: Test Primary Cluster Authentication
+# Get primary cluster console URL
+oc config use-context cluster1
+CLUSTER1_CONSOLE_URL=$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')
+
+echo "Testing SSO on Cluster 1:"
+echo "Console URL: https://$CLUSTER1_CONSOLE_URL"
+echo "Test with: testuser1 / RedHat123!"
+Step 2: Verify User Login via CLI
+# Test OIDC login (this will open a browser)
+oc login --web
+
+# Alternative: Test with token
+# Get token from Keycloak
+TOKEN=$(curl -s -X POST "https://$KEYCLOAK_URL/auth/realms/openshift/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=testuser1" \
+  -d "password=RedHat123!" \
+  -d "grant_type=password" \
+  -d "client_id=openshift" \
+  -d "client_secret=openshift-client-secret" | jq -r '.access_token')
+
+# Login with token
+oc login --token=$TOKEN
+Step 3: Test Secondary Cluster Authentication
+# Switch to cluster2
+oc config use-context cluster2
+CLUSTER2_CONSOLE_URL=$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')
+
+echo "Testing SSO on Cluster 2:"
+echo "Console URL: https://$CLUSTER2_CONSOLE_URL"
+echo "Test with: testuser2 / RedHat123!"
+
+# Test login
+oc login --web
+Subtask 2.4: Configure Role-Based Access Control (RBAC)
+Step 1: Create Cluster Role Bindings
+# Switch to cluster1
+oc config use-context cluster1
+
+# Create cluster role binding for testuser1
+oc create clusterrolebinding testuser1-cluster-admin \
+  --clusterrole=cluster-admin \
+  --user=testuser1
+
+# Create role binding for testuser2 (limited access)
+oc create rolebinding testuser2-view \
+  --clusterrole=view \
+  --user=testuser2 \
+  --namespace=default
+Step 2: Apply Similar RBAC to Cluster2
+# Switch to cluster2
+oc config use-context cluster2
+
+# Create similar role bindings
+oc create clusterrolebinding testuser1-cluster-admin \
+  --clusterrole=cluster-admin \
+  --user=testuser1
+
+oc create rolebinding testuser2-view \
+  --clusterrole=view \
+  --user=testuser2 \
+  --namespace=default
+Subtask 2.5: Validate Cross-Cluster SSO
+Step 1: Create Test Script for Validation
+# Create validation script
+cat << 'EOF' > validate-sso.sh
+#!/bin/bash
+
+echo "=== SSO Validation Script ==="
+echo "Testing authentication across clusters..."
+
+# Test Cluster 1
+echo "Testing Cluster 1..."
+oc config use-context cluster1
+CLUSTER1_API=$(oc whoami --show-server)
+echo "Cluster 1 API: $CLUSTER1_API"
+
+# Test authentication with testuser1
+echo "Testing testuser1 authentication..."
+oc login --username=testuser1 --password=RedHat123! > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ testuser1 authentication successful on Cluster 1"
+    oc whoami
+else
+    echo "✗ testuser1 authentication failed on Cluster 1"
+fi
+
+# Test Cluster 2
+echo "Testing Cluster 2..."
+oc config use-context cluster2
+CLUSTER2_API=$(oc whoami --show-server)
+echo "Cluster 2 API: $CLUSTER2_API"
+
+# Test authentication with testuser1
+echo "Testing testuser1 authentication..."
+oc login --username=testuser1 --password=RedHat123! > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ testuser1 authentication successful on Cluster 2"
+    oc whoami
+else
+    echo "✗ testuser1 authentication failed on Cluster 2"
+fi
+
+echo "=== Validation Complete ==="
+EOF
+
+chmod +x validate-sso.sh
+./validate-sso.sh
+Step 2: Test Token Sharing
+# Get token from one cluster and test on another
+oc config use-context cluster1
+oc login --username=testuser1 --password=RedHat123!
+TOKEN1=$(oc whoami -t)
+
+# Test token on cluster2
+oc config use-context cluster2
+oc login --token=$TOKEN1
+
+echo "Token sharing test:"
+oc whoami
+oc auth can-i get pods
+Troubleshooting Common Issues
+Issue 1: OAuth Pods Not Restarting
+# Force restart OAuth pods
+oc delete pods -l app=oauth-openshift -n openshift-authentication
+
+# Check pod logs
+oc logs -l app=oauth-openshift -n openshift-authentication
+Issue 2: Certificate Issues
+# Check certificate validity
+openssl s_client -connect $KEYCLOAK_URL:443 -servername $KEYCLOAK_URL
+
+# Update CA bundle if needed
+oc get configmap kube-root-ca.crt -n openshift-config -o yaml
+Issue 3: Keycloak Connection Issues
+# Test Keycloak connectivity
+curl -k https://$KEYCLOAK_URL/auth/realms/openshift/.well-known/openid_configuration
+
+# Check Keycloak logs
+oc logs -l app=keycloak -n keycloak-system
+Issue 4: User Authentication Failures
+# Check OAuth configuration
+oc get oauth cluster -o yaml
+
+# Verify identity provider configuration
+oc describe oauth cluster
+
+# Check authentication logs
+oc logs -l app=oauth-openshift -n openshift-authentication | grep ERROR
+Verification Commands
+Verify SSO Configuration
+# Check OAuth configuration
+oc get oauth cluster -o jsonpath='{.spec.identityProviders[0].name}'
+
+# List configured identity providers
+oc get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}'
+
+# Check user identities
+oc get users
+oc get identities
+Verify Keycloak Status
+# Check Keycloak deployment
+oc get keycloak -n keycloak-system
+oc get pods -n keycloak-system
+
+# Test Keycloak endpoint
+curl -k https://$KEYCLOAK_URL/auth/realms/openshift
+Verify Multi-Cluster Access
+# Test access to both clusters
+for context in cluster1 cluster2; do
+    echo "Testing $context..."
+    oc config use-context $context
+    oc whoami
+    oc auth can-i get pods
+    echo "---"
+done
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Deployed and configured Keycloak as a centralized identity provider, creating a robust foundation for enterprise SSO
+Set up OpenID Connect (OIDC) integration between Keycloak and multiple OpenShift clusters, enabling seamless authentication
+Implemented cross-cluster SSO that allows users to authenticate once and access multiple OpenShift environments
+Configured role-based access control (RBAC) to ensure proper authorization across clusters
+Tested and validated the SSO implementation to ensure it works correctly in a multi-cluster environment
+Key Achievements:
+Centralized Authentication: Users can now authenticate against a single identity provider and access multiple clusters
+Enhanced Security: Centralized user management reduces security risks and improves compliance
+Improved User Experience: Single sign-on eliminates the need for multiple credentials across clusters
+Scalable Architecture: The solution can be extended to additional clusters and identity sources
+Real-World Applications:
+This SSO configuration is essential for:
+
+Enterprise Environments: Where users need access to multiple OpenShift clusters
+Development Teams: Working across different environments (dev, test, prod)
+Multi-Tenant Scenarios: Where different teams share cluster resources
+Compliance Requirements: That mandate centralized authentication and audit trails
+Next Steps:
+To further enhance your SSO implementation, consider:
+
+Integrating with existing LDAP/Active Directory systems
+Implementing advanced authentication flows (MFA, conditional access)
+Setting up automated user provisioning and deprovisioning
+Configuring audit logging and monitoring for authentication events
+Exploring federation with other identity providers
+This lab provides the foundation for implementing enterprise-grade identity management in OpenShift environments, preparing you for real-world multi-cluster management scenarios and the Red Hat Certified Specialist in Multi Cluster Management certification.
