@@ -1,0 +1,894 @@
+Lab 12: Managing Application Health and Rollouts
+Objectives
+By the end of this lab, you will be able to:
+
+Configure comprehensive application health checks in Red Hat Advanced Cluster Management (RHACM)
+Set up monitoring for application deployments across multiple clusters
+Manage application rollouts using RHACM dashboard
+Implement automated health monitoring and alerting
+Troubleshoot application deployment issues across clusters
+Configure rollback strategies for failed deployments
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes concepts (pods, services, deployments)
+Familiarity with YAML configuration files
+Knowledge of container orchestration principles
+Experience with command-line interface operations
+Understanding of multi-cluster management concepts
+Completion of previous RHACM labs or equivalent experience
+Lab Environment
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install software.
+
+Your lab environment includes:
+
+RHACM Hub cluster (pre-installed and configured)
+Two managed clusters (cluster1 and cluster2)
+kubectl and oc CLI tools
+Sample applications for testing
+Pre-configured network connectivity between clusters
+Task 1: Set up Application Health Checks in RHACM
+Subtask 1.1: Verify Lab Environment
+First, let's verify that your RHACM environment is properly set up and accessible.
+
+Access your lab environment by clicking the provided terminal icon
+
+Verify RHACM installation by checking the hub cluster status:
+
+# Check if RHACM is running
+oc get pods -n open-cluster-management
+
+# Verify managed clusters are connected
+oc get managedclusters
+Confirm cluster connectivity:
+# Check cluster status
+oc get managedclusterinfo --all-namespaces
+
+# Verify cluster health
+oc get managedclusters -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[0].type,AVAILABLE:.status.conditions[0].status
+Subtask 1.2: Create a Sample Application for Health Monitoring
+We'll deploy a sample web application that we can monitor across multiple clusters.
+
+Create a namespace for our application:
+# Create application namespace
+oc create namespace health-demo
+Create the sample application deployment:
+cat << 'EOF' > sample-app-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-demo-app
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: health-demo
+  template:
+    metadata:
+      labels:
+        app: health-demo
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-demo-service
+  namespace: health-demo
+spec:
+  selector:
+    app: health-demo
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+Apply the deployment:
+oc apply -f sample-app-deployment.yaml
+Verify the application is running:
+# Check deployment status
+oc get deployments -n health-demo
+
+# Check pod status
+oc get pods -n health-demo
+
+# Check service
+oc get services -n health-demo
+Subtask 1.3: Configure RHACM Application Resource
+Now we'll create an RHACM Application resource to manage our application across clusters.
+
+Create the Application definition:
+cat << 'EOF' > rhacm-application.yaml
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: health-demo-app
+  namespace: health-demo
+  annotations:
+    apps.open-cluster-management.io/deployables: ""
+spec:
+  componentKinds:
+  - group: apps.open-cluster-management.io
+    kind: Deployable
+  descriptor: {}
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - health-demo-app
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Deployable
+metadata:
+  name: health-demo-deployable
+  namespace: health-demo
+  labels:
+    app: health-demo-app
+spec:
+  template:
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: health-demo-app
+      labels:
+        app: health-demo
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: health-demo
+      template:
+        metadata:
+          labels:
+            app: health-demo
+        spec:
+          containers:
+          - name: web-server
+            image: nginx:1.21
+            ports:
+            - containerPort: 80
+            livenessProbe:
+              httpGet:
+                path: /
+                port: 80
+              initialDelaySeconds: 30
+              periodSeconds: 10
+            readinessProbe:
+              httpGet:
+                path: /
+                port: 80
+              initialDelaySeconds: 5
+              periodSeconds: 5
+EOF
+Apply the RHACM Application:
+oc apply -f rhacm-application.yaml
+Verify the Application resource:
+# Check application status
+oc get applications -n health-demo
+
+# Check deployables
+oc get deployables -n health-demo
+Subtask 1.4: Create Placement Rules and Policies
+We need to define where our application should be deployed and what policies should govern it.
+
+Create a Placement Rule:
+cat << 'EOF' > placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: health-demo-placement
+  namespace: health-demo
+spec:
+  clusterConditions:
+  - status: "True"
+    type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchLabels:
+      environment: production
+  clusterReplicas: 2
+EOF
+Apply the Placement Rule:
+oc apply -f placement-rule.yaml
+Create a Health Policy:
+cat << 'EOF' > health-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: health-demo-policy
+  namespace: health-demo
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.IP Information Protection Processes and Procedures
+    policy.open-cluster-management.io/controls: PR.IP-1 Baseline Configuration
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: health-demo-config-policy
+        spec:
+          remediationAction: inform
+          severity: medium
+          namespaceSelector:
+            exclude:
+            - kube-*
+            include:
+            - health-demo
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: health-demo-app
+                  namespace: health-demo
+                spec:
+                  replicas: 2
+                  template:
+                    spec:
+                      containers:
+                      - name: web-server
+                        livenessProbe:
+                          httpGet:
+                            path: /
+                            port: 80
+                          initialDelaySeconds: 30
+                          periodSeconds: 10
+                        readinessProbe:
+                          httpGet:
+                            path: /
+                            port: 80
+                          initialDelaySeconds: 5
+                          periodSeconds: 5
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: health-demo-policy-binding
+  namespace: health-demo
+placementRef:
+  name: health-demo-placement
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+- name: health-demo-policy
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
+EOF
+Apply the Health Policy:
+oc apply -f health-policy.yaml
+Verify policy deployment:
+# Check policy status
+oc get policies -n health-demo
+
+# Check placement binding
+oc get placementbindings -n health-demo
+
+# Check policy compliance
+oc describe policy health-demo-policy -n health-demo
+Subtask 1.5: Configure Advanced Health Monitoring
+Let's set up more sophisticated health monitoring with custom metrics and alerts.
+
+Create a ServiceMonitor for Prometheus integration:
+cat << 'EOF' > service-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: health-demo-monitor
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  selector:
+    matchLabels:
+      app: health-demo
+  endpoints:
+  - port: web
+    interval: 30s
+    path: /metrics
+    scheme: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: health-demo
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        server {
+            listen 80;
+            location / {
+                root /usr/share/nginx/html;
+                index index.html;
+            }
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            location /metrics {
+                access_log off;
+                return 200 "# HELP nginx_up Nginx is up\n# TYPE nginx_up gauge\nnginx_up 1\n";
+                add_header Content-Type text/plain;
+            }
+        }
+    }
+EOF
+Update the deployment to use the custom configuration:
+cat << 'EOF' > updated-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-demo-app
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: health-demo
+  template:
+    metadata:
+      labels:
+        app: health-demo
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+          name: web
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-demo-service
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  selector:
+    app: health-demo
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+    name: web
+  type: ClusterIP
+EOF
+Apply the updated configuration:
+# Apply the ConfigMap and ServiceMonitor
+oc apply -f service-monitor.yaml
+
+# Update the deployment
+oc apply -f updated-deployment.yaml
+Verify the health endpoints:
+# Wait for pods to be ready
+oc wait --for=condition=ready pod -l app=health-demo -n health-demo --timeout=300s
+
+# Test the health endpoint
+oc port-forward -n health-demo svc/health-demo-service 8080:80 &
+sleep 5
+curl http://localhost:8080/health
+curl http://localhost:8080/metrics
+pkill -f "port-forward"
+Task 2: Manage and Monitor Application Rollouts Using RHACM Dashboard
+Subtask 2.1: Access the RHACM Dashboard
+Get the RHACM console URL:
+# Get the route for RHACM console
+oc get route multicloud-console -n open-cluster-management -o jsonpath='{.spec.host}'
+Get login credentials:
+# Get the admin password
+oc extract secret/multicloud-console-admin-password -n open-cluster-management --to=-
+Access the dashboard using the URL from step 1 and credentials from step 2
+Subtask 2.2: Create Application Sets for Multi-Cluster Rollouts
+We'll use ApplicationSets to manage rollouts across multiple clusters.
+
+Create an ApplicationSet definition:
+cat << 'EOF' > application-set.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: health-demo-appset
+  namespace: openshift-gitops
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          environment: production
+  template:
+    metadata:
+      name: '{{name}}-health-demo'
+      labels:
+        app.kubernetes.io/name: health-demo
+        app.kubernetes.io/instance: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/your-repo/health-demo
+        targetRevision: HEAD
+        path: manifests
+      destination:
+        server: '{{server}}'
+        namespace: health-demo
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+EOF
+Create a GitOps repository structure (simulated locally):
+# Create local manifests directory
+mkdir -p manifests
+
+# Copy our application manifests
+cp sample-app-deployment.yaml manifests/
+cp service-monitor.yaml manifests/
+
+# Create a kustomization file
+cat << 'EOF' > manifests/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- sample-app-deployment.yaml
+- service-monitor.yaml
+
+commonLabels:
+  app.kubernetes.io/name: health-demo
+  app.kubernetes.io/managed-by: rhacm
+
+images:
+- name: nginx
+  newTag: "1.21"
+EOF
+Subtask 2.3: Configure Rollout Strategies
+Create a progressive rollout configuration:
+cat << 'EOF' > progressive-rollout.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: health-demo-rollout
+  namespace: health-demo
+spec:
+  replicas: 6
+  strategy:
+    canary:
+      maxSurge: "25%"
+      maxUnavailable: 0
+      steps:
+      - setWeight: 20
+      - pause: {duration: 60s}
+      - setWeight: 40
+      - pause: {duration: 60s}
+      - setWeight: 60
+      - pause: {duration: 60s}
+      - setWeight: 80
+      - pause: {duration: 60s}
+      analysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: health-demo-service
+      trafficRouting:
+        nginx:
+          stableService: health-demo-service
+          canaryService: health-demo-canary-service
+  selector:
+    matchLabels:
+      app: health-demo
+  template:
+    metadata:
+      labels:
+        app: health-demo
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: health-demo
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: success-rate
+    interval: 30s
+    count: 5
+    successCondition: result[0] >= 0.95
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc.cluster.local:80
+        query: |
+          sum(rate(nginx_http_requests_total{service="{{args.service-name}}",status!~"5.."}[2m])) /
+          sum(rate(nginx_http_requests_total{service="{{args.service-name}}"}[2m]))
+EOF
+Apply the rollout configuration:
+oc apply -f progressive-rollout.yaml
+Subtask 2.4: Monitor Rollout Progress
+Create a monitoring script:
+cat << 'EOF' > monitor-rollout.sh
+#!/bin/bash
+
+echo "Monitoring Health Demo Application Rollout"
+echo "=========================================="
+
+while true; do
+    echo ""
+    echo "$(date): Checking rollout status..."
+    
+    # Check rollout status
+    echo "Rollout Status:"
+    oc get rollout health-demo-rollout -n health-demo -o custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UP-TO-DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas
+    
+    # Check pod status
+    echo ""
+    echo "Pod Status:"
+    oc get pods -n health-demo -l app=health-demo
+    
+    # Check service endpoints
+    echo ""
+    echo "Service Endpoints:"
+    oc get endpoints -n health-demo
+    
+    # Check application health
+    echo ""
+    echo "Application Health Check:"
+    if oc port-forward -n health-demo svc/health-demo-service 8081:80 >/dev/null 2>&1 &
+    then
+        PF_PID=$!
+        sleep 2
+        if curl -s http://localhost:8081/health >/dev/null 2>&1; then
+            echo "✓ Application is healthy"
+        else
+            echo "✗ Application health check failed"
+        fi
+        kill $PF_PID 2>/dev/null
+    fi
+    
+    echo ""
+    echo "Press Ctrl+C to stop monitoring"
+    sleep 30
+done
+EOF
+
+chmod +x monitor-rollout.sh
+Run the monitoring script:
+./monitor-rollout.sh
+Subtask 2.5: Simulate and Handle Rollout Issues
+Create a problematic deployment to test rollback:
+cat << 'EOF' > problematic-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-demo-app-v2
+  namespace: health-demo
+  labels:
+    app: health-demo
+    version: v2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: health-demo
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: health-demo
+        version: v2
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:invalid-tag  # This will cause ImagePullBackOff
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+EOF
+Apply the problematic deployment:
+oc apply -f problematic-deployment.yaml
+Monitor the failure:
+# Watch the deployment fail
+oc get pods -n health-demo -w
+
+# Check deployment status
+oc describe deployment health-demo-app-v2 -n health-demo
+
+# Check events
+oc get events -n health-demo --sort-by='.lastTimestamp'
+Implement automated rollback:
+cat << 'EOF' > rollback-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: rollback-policy
+  namespace: health-demo
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rollback-failed-deployments
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            include:
+            - health-demo
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  namespace: health-demo
+                status:
+                  conditions:
+                  - type: Progressing
+                    status: "False"
+                    reason: ProgressDeadlineExceeded
+EOF
+Apply the rollback policy:
+oc apply -f rollback-policy.yaml
+Clean up the failed deployment:
+# Delete the problematic deployment
+oc delete deployment health-demo-app-v2 -n health-demo
+
+# Verify cleanup
+oc get deployments -n health-demo
+Subtask 2.6: Configure Alerts and Notifications
+Create an AlertManager configuration:
+cat << 'EOF' > alert-rules.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: health-demo-alerts
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  groups:
+  - name: health-demo.rules
+    rules:
+    - alert: HealthDemoAppDown
+      expr: up{job="health-demo-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: health-demo
+      annotations:
+        summary: "Health Demo application is down"
+        description: "Health Demo application has been down for more than 1 minute"
+    
+    - alert: HealthDemoHighErrorRate
+      expr: rate(nginx_http_requests_total{status=~"5.."}[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        service: health-demo
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is above 10% for more than 2 minutes"
+    
+    - alert: HealthDemoHighLatency
+      expr: histogram_quantile(0.95, rate(nginx_http_request_duration_seconds_bucket[5m])) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+        service: health-demo
+      annotations:
+        summary: "High latency detected"
+        description: "95th percentile latency is above 500ms for more than 5 minutes"
+EOF
+Apply the alert rules:
+oc apply -f alert-rules.yaml
+Verify alerts are configured:
+# Check PrometheusRule
+oc get prometheusrules -n health-demo
+
+# Check if alerts are loaded (if Prometheus is available)
+oc port-forward -n openshift-monitoring svc/prometheus-k8s 9090:9090 &
+sleep 5
+curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name=="health-demo.rules")'
+pkill -f "port-forward"
+Troubleshooting Common Issues
+Issue 1: Application Not Deploying to Managed Clusters
+Symptoms: Application shows as created but pods are not appearing on managed clusters.
+
+Solution:
+
+# Check cluster labels
+oc get managedclusters --show-labels
+
+# Verify placement rule matches
+oc describe placementrule health-demo-placement -n health-demo
+
+# Check if clusters meet placement criteria
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[0].status
+Issue 2: Health Checks Failing
+Symptoms: Pods are running but health checks are failing.
+
+Solution:
+
+# Check pod logs
+oc logs -l app=health-demo -n health-demo
+
+# Test health endpoint manually
+oc exec -it deployment/health-demo-app -n health-demo -- curl localhost/health
+
+# Check service configuration
+oc describe service health-demo-service -n health-demo
+Issue 3: Rollout Stuck in Progress
+Symptoms: Rollout is not progressing through canary stages.
+
+Solution:
+
+# Check rollout status
+oc describe rollout health-demo-rollout -n health-demo
+
+# Check analysis results
+oc get analysisrun -n health-demo
+
+# Manual promotion if needed
+oc argo rollouts promote health-demo-rollout -n health-demo
+Verification Steps
+Verify application health monitoring:
+# Check all components are healthy
+oc get all -n health-demo
+
+# Verify health endpoints respond
+for pod in $(oc get pods -n health-demo -l app=health-demo -o name); do
+    echo "Testing $pod"
+    oc exec $pod -n health-demo -- curl -s localhost/health
+done
+Verify multi-cluster deployment:
+# Check application status across clusters
+oc get applications --all-namespaces
+
+# Verify policies are compliant
+oc get policies --all-namespaces
+Verify monitoring and alerts:
+# Check ServiceMonitor is discovered
+oc get servicemonitor -n health-demo
+
+# Verify PrometheusRule is active
+oc get prometheusrules -n health-demo
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Configured robust application health checks using Kubernetes native probes (liveness, readiness, and startup probes) integrated with RHACM
+Set up comprehensive monitoring with custom metrics endpoints and Prometheus integration
+Implemented multi-cluster application management using RHACM policies and placement rules
+Created automated rollout strategies with canary deployments and progressive delivery
+Established monitoring and alerting for application health across multiple clusters
+Configured automated rollback mechanisms for failed deployments
+Learned troubleshooting techniques for common multi-cluster application issues
+Why This Matters: In enterprise environments, managing applications across multiple Kubernetes clusters is critical for:
+
+High Availability: Ensuring applications remain available even if individual clusters fail
+Disaster Recovery: Maintaining service continuity across geographic regions
+Compliance: Meeting regulatory requirements for data locality and redundancy
+Performance: Distributing load across multiple clusters for better user experience
+Risk Management: Reducing blast radius of failures through controlled rollouts
+The skills you've developed in this lab are essential for the Red Hat Certified Specialist in Multi Cluster Management exam and real-world enterprise Kubernetes operations. You now understand how to maintain application health and manage complex rollouts across distributed infrastructure, which is fundamental to modern cloud-native operations.
+
+Next Steps: Practice these concepts with different application types, experiment with various rollout strategies, and explore integration with CI/CD pipelines for complete GitOps workflows.

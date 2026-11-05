@@ -1,0 +1,32 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: rollback-policy
+  namespace: health-demo
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rollback-failed-deployments
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            include:
+            - health-demo
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  namespace: health-demo
+                status:
+                  conditions:
+                  - type: Progressing
+                    status: "False"
+                    reason: ProgressDeadlineExceeded

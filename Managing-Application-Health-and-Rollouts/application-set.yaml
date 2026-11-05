@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: health-demo-appset
+  namespace: openshift-gitops
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          environment: production
+  template:
+    metadata:
+      name: '{{name}}-health-demo'
+      labels:
+        app.kubernetes.io/name: health-demo
+        app.kubernetes.io/instance: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/your-repo/health-demo
+        targetRevision: HEAD
+        path: manifests
+      destination:
+        server: '{{server}}'
+        namespace: health-demo
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

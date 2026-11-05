@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-demo-app-v2
+  namespace: health-demo
+  labels:
+    app: health-demo
+    version: v2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: health-demo
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: health-demo
+        version: v2
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:invalid-tag  # This will cause ImagePullBackOff
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5

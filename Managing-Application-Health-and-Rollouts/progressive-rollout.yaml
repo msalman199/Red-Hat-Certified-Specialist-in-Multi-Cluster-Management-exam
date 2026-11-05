@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: health-demo-rollout
+  namespace: health-demo
+spec:
+  replicas: 6
+  strategy:
+    canary:
+      maxSurge: "25%"
+      maxUnavailable: 0
+      steps:
+      - setWeight: 20
+      - pause: {duration: 60s}
+      - setWeight: 40
+      - pause: {duration: 60s}
+      - setWeight: 60
+      - pause: {duration: 60s}
+      - setWeight: 80
+      - pause: {duration: 60s}
+      analysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: health-demo-service
+      trafficRouting:
+        nginx:
+          stableService: health-demo-service
+          canaryService: health-demo-canary-service
+  selector:
+    matchLabels:
+      app: health-demo
+  template:
+    metadata:
+      labels:
+        app: health-demo
+    spec:
+      containers:
+      - name: web-server
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: health-demo
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: success-rate
+    interval: 30s
+    count: 5
+    successCondition: result[0] >= 0.95
+    provider:
+      prometheus:
+        address: http://prometheus-server.monitoring.svc.cluster.local:80
+        query: |
+          sum(rate(nginx_http_requests_total{service="{{args.service-name}}",status!~"5.."}[2m])) /
+          sum(rate(nginx_http_requests_total{service="{{args.service-name}}"}[2m]))

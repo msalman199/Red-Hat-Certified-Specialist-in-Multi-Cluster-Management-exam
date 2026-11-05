@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- sample-app-deployment.yaml
+- service-monitor.yaml
+
+commonLabels:
+  app.kubernetes.io/name: health-demo
+  app.kubernetes.io/managed-by: rhacm
+
+images:
+- name: nginx
+  newTag: "1.21"

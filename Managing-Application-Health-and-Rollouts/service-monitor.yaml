@@ -1,0 +1,46 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: health-demo-monitor
+  namespace: health-demo
+  labels:
+    app: health-demo
+spec:
+  selector:
+    matchLabels:
+      app: health-demo
+  endpoints:
+  - port: web
+    interval: 30s
+    path: /metrics
+    scheme: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: health-demo
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        server {
+            listen 80;
+            location / {
+                root /usr/share/nginx/html;
+                index index.html;
+            }
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            location /metrics {
+                access_log off;
+                return 200 "# HELP nginx_up Nginx is up\n# TYPE nginx_up gauge\nnginx_up 1\n";
+                add_header Content-Type text/plain;
+            }
+        }
+    }
