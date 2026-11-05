@@ -1,0 +1,8 @@
+metadata:
+  name: staging-cluster
+  labels:
+    environment: staging
+    region: us-west-2
+spec:
+  server: https://kubernetes.default.svc
+  namespace: guestbook-staging

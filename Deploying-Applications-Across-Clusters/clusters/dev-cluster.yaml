@@ -1,0 +1,8 @@
+metadata:
+  name: dev-cluster
+  labels:
+    environment: development
+    region: us-east-1
+spec:
+  server: https://kubernetes.default.svc
+  namespace: guestbook-dev

@@ -1,0 +1,8 @@
+metadata:
+  name: prod-cluster
+  labels:
+    environment: production
+    region: us-central-1
+spec:
+  server: https://kubernetes.default.svc
+  namespace: guestbook-prod
