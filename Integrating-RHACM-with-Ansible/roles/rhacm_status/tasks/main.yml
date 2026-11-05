@@ -1,0 +1,46 @@
+---
+- name: Check whether the RHACM namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ rhacm_namespace | default('open-cluster-management') }}"
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: rhacm_ns_info
+
+- name: Report RHACM namespace presence
+  ansible.builtin.debug:
+    msg: >-
+      RHACM namespace '{{ rhacm_namespace | default('open-cluster-management') }}' is
+      {{ 'present' if rhacm_ns_info.resources else 'NOT FOUND - RHACM may not be installed' }}
+
+- name: Query MultiClusterHub status (only if namespace exists)
+  kubernetes.core.k8s_info:
+    api_version: operator.open-cluster-management.io/v1
+    kind: MultiClusterHub
+    namespace: "{{ rhacm_namespace | default('open-cluster-management') }}"
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: mch_status
+  when: rhacm_ns_info.resources | length > 0
+  ignore_errors: true
+
+- name: Report MultiClusterHub status
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'MultiClusterHub phase: ' + mch_status.resources[0].status.phase
+      if (mch_status is defined and mch_status.resources is defined and mch_status.resources | length > 0)
+      else 'MultiClusterHub resource not found (RHACM operator not installed or CRD missing)' }}
+
+- name: List existing ManagedCluster resources
+  kubernetes.core.k8s_info:
+    api_version: cluster.open-cluster-management.io/v1
+    kind: ManagedCluster
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: managed_clusters
+  ignore_errors: true
+
+- name: Report managed cluster count
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Found ' + (managed_clusters.resources | length | string) + ' managed cluster(s)'
+      if (managed_clusters is defined and managed_clusters.resources is defined)
+      else 'ManagedCluster CRD not found - RHACM cluster management API is not available' }}

@@ -1,0 +1,12 @@
+---
+- name: Register a ManagedCluster via Ansible
+  hosts: rhacm_hubs
+  gather_facts: false
+  vars:
+    cluster_name: "test-cluster-ansible"
+    cloud_provider: "aws"
+    cluster_environment: "testing"
+  tasks:
+    - name: Include cluster_management role
+      ansible.builtin.include_role:
+        name: cluster_management

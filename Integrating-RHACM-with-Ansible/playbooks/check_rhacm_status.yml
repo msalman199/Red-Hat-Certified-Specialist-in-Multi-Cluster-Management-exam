@@ -1,0 +1,8 @@
+---
+- name: Report RHACM Hub Status via Ansible
+  hosts: rhacm_hubs
+  gather_facts: false
+  tasks:
+    - name: Include rhacm_status role
+      ansible.builtin.include_role:
+        name: rhacm_status

@@ -1,0 +1,67 @@
+---
+- name: Create application namespace
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ app_namespace }}"
+
+- name: Create Channel pointing to the Git repository
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: Channel
+      metadata:
+        name: "{{ app_name }}-channel"
+        namespace: "{{ app_namespace }}"
+      spec:
+        type: Git
+        pathname: "{{ git_repo_url }}"
+
+- name: Create PlacementRule for target clusters
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: PlacementRule
+      metadata:
+        name: "{{ app_name }}-placement"
+        namespace: "{{ app_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+      spec:
+        clusterConditions:
+          - status: "True"
+            type: ManagedClusterConditionAvailable
+        clusterSelector:
+          matchLabels: "{{ cluster_selector | default({}) }}"
+
+- name: Create Subscription linking channel to placement
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: Subscription
+      metadata:
+        name: "{{ app_name }}-subscription"
+        namespace: "{{ app_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+      spec:
+        channel: "{{ app_namespace }}/{{ app_name }}-channel"
+        placement:
+          placementRef:
+            name: "{{ app_name }}-placement"
+            kind: PlacementRule
+  register: sub_result
+
+- name: Report subscription creation result
+  ansible.builtin.debug:
+    msg: "Subscription '{{ app_name }}-subscription' changed: {{ sub_result.changed }}"

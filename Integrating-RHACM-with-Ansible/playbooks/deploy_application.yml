@@ -1,0 +1,14 @@
+---
+- name: Deploy an Application via RHACM Subscription
+  hosts: rhacm_hubs
+  gather_facts: false
+  vars:
+    app_name: "nginx-demo"
+    app_namespace: "rhacm-applications"
+    git_repo_url: "https://github.com/open-cluster-management-io/multicloud-operators-subscription"
+    cluster_selector:
+      environment: development
+  tasks:
+    - name: Include application_deployment role
+      ansible.builtin.include_role:
+        name: application_deployment

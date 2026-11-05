@@ -1,0 +1,391 @@
+Lab 18: Integrating RHACM with Ansible
+Objectives
+By the end of this lab, students will be able to:
+
+Understand the integration architecture between Red Hat Advanced Cluster Management (RHACM) and Ansible
+Configure Ansible collections and inventory to interact with RHACM APIs on a hub cluster
+Build Ansible roles and playbooks that query RHACM status and manage ManagedCluster resources
+Automate RHACM Application/Subscription deployment across managed clusters using Ansible
+Validate automation workflows and troubleshoot common integration failures using real error messages
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes concepts (namespaces, custom resources, labels/selectors)
+Familiarity with Red Hat Advanced Cluster Management (RHACM) fundamentals (hub/managed cluster model, ManagedCluster, Application/Subscription resources)
+Working knowledge of Ansible playbooks, roles, and variables
+Experience with YAML syntax
+Basic Linux command-line skills
+This lab assumes access to an isolated practice environment (a lab-provided cloud machine or your own sandbox cluster) with an RHACM hub already installed, or a plain Kubernetes/OpenShift cluster where you can simulate the RHACM custom resources for automation practice. All commands below are run against your own environment for defensive, hands-on learning purposes only.
+
+Install the required tooling before starting:
+
+# Verify Python (3.8+) and pip
+python3 --version
+pip3 --version
+
+# Install Ansible core if not already present
+pip3 install --user ansible-core
+
+# Verify Ansible installation
+ansible --version
+
+# Install the Kubernetes collection (this is the correct, real collection
+# for interacting with Kubernetes/OpenShift/RHACM custom resources -
+# there is no separate "redhat.rhacm" collection; RHACM resources are
+# managed as standard Kubernetes custom resources via kubernetes.core)
+ansible-galaxy collection install kubernetes.core
+
+# Verify the collection installed correctly
+ansible-galaxy collection list kubernetes.core
+
+# The kubernetes.core collection also requires the Python kubernetes client
+pip3 install --user kubernetes
+Lab Environment Setup
+You need access to a Kubernetes or OpenShift cluster with kubectl (or oc) configured via a valid kubeconfig file. If your cluster has RHACM installed, you will interact with the real open-cluster-management namespace and its custom resources. If you do not have RHACM installed, you can still complete every task: the playbooks below create/read standard Kubernetes custom resources whose API groups match RHACM's real API groups, so the same automation logic applies once RHACM is installed in a production-like environment.
+
+Confirm cluster access before proceeding:
+
+kubectl config current-context
+kubectl get nodes
+Expected result: kubectl get nodes returns at least one node in Ready status. If this fails, fix cluster access before continuing â�� none of the later tasks will work without it.
+
+Task 1: Configure Ansible to Query and Manage RHACM Resources
+Subtask 1.1: Set Up the Ansible Project Structure
+Create the project directory and layout:
+mkdir -p ~/rhacm-ansible-lab/{playbooks,inventory,roles}
+cd ~/rhacm-ansible-lab
+Create the Ansible configuration file:
+cat > ansible.cfg << 'EOF'
+[defaults]
+inventory = inventory/hosts.yml
+host_key_checking = False
+stdout_callback = yaml
+gathering = explicit
+retry_files_enabled = False
+roles_path = roles
+EOF
+Create the inventory file. Replace /home/student/.kube/config with the actual path to your kubeconfig if different (check with echo $KUBECONFIG or use the default ~/.kube/config):
+cat > inventory/hosts.yml << 'EOF'
+all:
+  children:
+    rhacm_hubs:
+      hosts:
+        hub-cluster:
+          ansible_connection: local
+          kubeconfig_path: "{{ lookup('env', 'HOME') }}/.kube/config"
+          rhacm_namespace: open-cluster-management
+EOF
+Verify the inventory parses correctly:
+ansible-inventory -i inventory/hosts.yml --list
+Deliverable: The ansible-inventory command outputs valid JSON containing a hub-cluster host under rhacm_hubs with the kubeconfig_path variable set to your resolved home directory path.
+
+Subtask 1.2: Create a Role to Report RHACM Hub Status
+Scaffold the role:
+ansible-galaxy init roles/rhacm_status
+Write the tasks file for the role:
+cat > roles/rhacm_status/tasks/main.yml << 'EOF'
+---
+- name: Check whether the RHACM namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ rhacm_namespace | default('open-cluster-management') }}"
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: rhacm_ns_info
+
+- name: Report RHACM namespace presence
+  ansible.builtin.debug:
+    msg: >-
+      RHACM namespace '{{ rhacm_namespace | default('open-cluster-management') }}' is
+      {{ 'present' if rhacm_ns_info.resources else 'NOT FOUND - RHACM may not be installed' }}
+
+- name: Query MultiClusterHub status (only if namespace exists)
+  kubernetes.core.k8s_info:
+    api_version: operator.open-cluster-management.io/v1
+    kind: MultiClusterHub
+    namespace: "{{ rhacm_namespace | default('open-cluster-management') }}"
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: mch_status
+  when: rhacm_ns_info.resources | length > 0
+  ignore_errors: true
+
+- name: Report MultiClusterHub status
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'MultiClusterHub phase: ' + mch_status.resources[0].status.phase
+      if (mch_status is defined and mch_status.resources is defined and mch_status.resources | length > 0)
+      else 'MultiClusterHub resource not found (RHACM operator not installed or CRD missing)' }}
+
+- name: List existing ManagedCluster resources
+  kubernetes.core.k8s_info:
+    api_version: cluster.open-cluster-management.io/v1
+    kind: ManagedCluster
+    kubeconfig: "{{ kubeconfig_path }}"
+  register: managed_clusters
+  ignore_errors: true
+
+- name: Report managed cluster count
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Found ' + (managed_clusters.resources | length | string) + ' managed cluster(s)'
+      if (managed_clusters is defined and managed_clusters.resources is defined)
+      else 'ManagedCluster CRD not found - RHACM cluster management API is not available' }}
+EOF
+Create a playbook that runs the role:
+cat > playbooks/check_rhacm_status.yml << 'EOF'
+---
+- name: Report RHACM Hub Status via Ansible
+  hosts: rhacm_hubs
+  gather_facts: false
+  tasks:
+    - name: Include rhacm_status role
+      ansible.builtin.include_role:
+        name: rhacm_status
+EOF
+Run it:
+ansible-playbook playbooks/check_rhacm_status.yml
+Deliverable: Console output shows three debug messages: RHACM namespace presence, MultiClusterHub phase (or a clear "not found" message), and a managed cluster count (or a clear CRD-not-found message). If RHACM is installed, you should see phase: Running and at least Found 0 managed cluster(s) (the hub itself is not counted as a ManagedCluster unless self-managed).
+
+Task 2: Automate ManagedCluster Registration and Application Deployment
+Subtask 2.1: Create a Role to Manage ManagedCluster Resources
+Scaffold the role:
+ansible-galaxy init roles/cluster_management
+Write the tasks:
+cat > roles/cluster_management/tasks/main.yml << 'EOF'
+---
+- name: Create namespace for the managed cluster
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ cluster_name }}"
+
+- name: Create ManagedCluster resource
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: cluster.open-cluster-management.io/v1
+      kind: ManagedCluster
+      metadata:
+        name: "{{ cluster_name }}"
+        labels:
+          cloud: "{{ cloud_provider | default('auto-detect') }}"
+          environment: "{{ cluster_environment | default('development') }}"
+      spec:
+        hubAcceptsClient: true
+  register: mc_result
+
+- name: Report ManagedCluster creation result
+  ansible.builtin.debug:
+    msg: "ManagedCluster '{{ cluster_name }}' changed: {{ mc_result.changed }}"
+EOF
+Create a playbook that registers a test ManagedCluster entry:
+cat > playbooks/register_cluster.yml << 'EOF'
+---
+- name: Register a ManagedCluster via Ansible
+  hosts: rhacm_hubs
+  gather_facts: false
+  vars:
+    cluster_name: "test-cluster-ansible"
+    cloud_provider: "aws"
+    cluster_environment: "testing"
+  tasks:
+    - name: Include cluster_management role
+      ansible.builtin.include_role:
+        name: cluster_management
+EOF
+Run the playbook and verify:
+ansible-playbook playbooks/register_cluster.yml
+
+kubectl get managedcluster test-cluster-ansible
+kubectl get namespace test-cluster-ansible
+Deliverable: kubectl get managedcluster test-cluster-ansible returns the resource with hubAcceptsClient: true visible via kubectl get managedcluster test-cluster-ansible -o yaml, and the matching namespace exists. Note: this registers the ManagedCluster object itself; a real managed cluster still needs its klusterlet agent to establish the actual connection, which is outside the scope of this automation exercise.
+
+Subtask 2.2: Automate Application Deployment with a Subscription
+Scaffold the role:
+ansible-galaxy init roles/application_deployment
+Write the tasks:
+cat > roles/application_deployment/tasks/main.yml << 'EOF'
+---
+- name: Create application namespace
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ app_namespace }}"
+
+- name: Create Channel pointing to the Git repository
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: Channel
+      metadata:
+        name: "{{ app_name }}-channel"
+        namespace: "{{ app_namespace }}"
+      spec:
+        type: Git
+        pathname: "{{ git_repo_url }}"
+
+- name: Create PlacementRule for target clusters
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: PlacementRule
+      metadata:
+        name: "{{ app_name }}-placement"
+        namespace: "{{ app_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+      spec:
+        clusterConditions:
+          - status: "True"
+            type: ManagedClusterConditionAvailable
+        clusterSelector:
+          matchLabels: "{{ cluster_selector | default({}) }}"
+
+- name: Create Subscription linking channel to placement
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: apps.open-cluster-management.io/v1
+      kind: Subscription
+      metadata:
+        name: "{{ app_name }}-subscription"
+        namespace: "{{ app_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+      spec:
+        channel: "{{ app_namespace }}/{{ app_name }}-channel"
+        placement:
+          placementRef:
+            name: "{{ app_name }}-placement"
+            kind: PlacementRule
+  register: sub_result
+
+- name: Report subscription creation result
+  ansible.builtin.debug:
+    msg: "Subscription '{{ app_name }}-subscription' changed: {{ sub_result.changed }}"
+EOF
+Create a playbook that deploys a sample application:
+cat > playbooks/deploy_application.yml << 'EOF'
+---
+- name: Deploy an Application via RHACM Subscription
+  hosts: rhacm_hubs
+  gather_facts: false
+  vars:
+    app_name: "nginx-demo"
+    app_namespace: "rhacm-applications"
+    git_repo_url: "https://github.com/open-cluster-management-io/multicloud-operators-subscription"
+    cluster_selector:
+      environment: development
+  tasks:
+    - name: Include application_deployment role
+      ansible.builtin.include_role:
+        name: application_deployment
+EOF
+Run it and verify:
+ansible-playbook playbooks/deploy_application.yml
+
+kubectl get channel -n rhacm-applications
+kubectl get placementrule -n rhacm-applications
+kubectl get subscription -n rhacm-applications
+Deliverable: All three commands return the nginx-demo-channel, nginx-demo-placement, and nginx-demo-subscription resources in the rhacm-applications namespace. Running kubectl describe subscription nginx-demo-subscription -n rhacm-applications shows the Channel field correctly pointing to rhacm-applications/nginx-demo-channel.
+
+Subtask 2.3: Build a Combined Validation Playbook
+Create a validation playbook that checks every resource created so far and writes a report:
+cat > playbooks/validate_integration.yml << 'EOF'
+---
+- name: Validate RHACM-Ansible Integration
+  hosts: rhacm_hubs
+  gather_facts: true
+  tasks:
+    - name: Check ManagedCluster test-cluster-ansible
+      kubernetes.core.k8s_info:
+        api_version: cluster.open-cluster-management.io/v1
+        kind: ManagedCluster
+        name: test-cluster-ansible
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: mc_check
+      ignore_errors: true
+
+    - name: Check Subscription nginx-demo-subscription
+      kubernetes.core.k8s_info:
+        api_version: apps.open-cluster-management.io/v1
+        kind: Subscription
+        name: nginx-demo-subscription
+        namespace: rhacm-applications
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: sub_check
+      ignore_errors: true
+
+    - name: Build validation results
+      ansible.builtin.set_fact:
+        validation_results:
+          - component: "ManagedCluster"
+            found: "{{ (mc_check.resources is defined) and (mc_check.resources | length > 0) }}"
+          - component: "Subscription"
+            found: "{{ (sub_check.resources is defined) and (sub_check.resources | length > 0) }}"
+
+    - name: Display validation summary
+      ansible.builtin.debug:
+        msg: "{{ item.component }}: {{ 'FOUND' if item.found else 'MISSING' }}"
+      loop: "{{ validation_results }}"
+
+    - name: Write validation report to a local file
+      ansible.builtin.copy:
+        content: |
+          RHACM-Ansible Integration Validation Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          {% for item in validation_results %}
+          {{ item.component }}: {{ 'FOUND' if item.found else 'MISSING' }}
+          {% endfor %}
+        dest: /tmp/rhacm-ansible-validation-report.txt
+      delegate_to: localhost
+EOF
+Run the validation and inspect the report:
+ansible-playbook playbooks/validate_integration.yml
+
+cat /tmp/rhacm-ansible-validation-report.txt
+Deliverable: /tmp/rhacm-ansible-validation-report.txt exists and lists ManagedCluster: FOUND and Subscription: FOUND (assuming Subtasks 2.1 and 2.2 completed successfully), along with a timestamp from ansible_date_time.iso8601.
+
+Subtask 2.4 (Optional): Prepare for Monitoring Integration
+If your cluster has the Prometheus Operator installed, RHACM metrics can be exposed via ServiceMonitor and PrometheusRule custom resources. Before creating these resources, always verify the Prometheus Operator CRDs exist â�� otherwise the resources will be created successfully but silently have no effect (no controller will reconcile them):
+
+kubectl get crd servicemonitors.monitoring.coreos.com
+Expected result: this returns a CRD named servicemonitors.monitoring.coreos.com. If it returns Error from server (NotFound), the Prometheus Operator is not installed, and you should skip creating ServiceMonitor/PrometheusRule resources until it is â�� creating them anyway will not raise an error but will not produce any working monitoring either. Installing the Prometheus Operator is outside the scope of this lab; treat this step as a readiness check to apply in your own environment.
+
+Expected Outcomes
+A working Ansible project (~/rhacm-ansible-lab) with roles and playbooks that query RHACM hub status, register a ManagedCluster, and deploy an Application/Subscription entirely through kubernetes.core modules
+A validation playbook and generated report confirming that Ansible-managed RHACM resources exist on the cluster
+Practical understanding of which RHACM API groups (cluster.open-cluster-management.io, apps.open-cluster-management.io, operator.open-cluster-management.io) Ansible must target, and how to detect missing prerequisites (RHACM operator, Prometheus Operator) before assuming automation failures
+Troubleshooting
+ERROR! couldn't resolve module/action 'kubernetes.core.k8s'
+
+Cause: the kubernetes.core collection is not installed for the Ansible interpreter being used, or it was installed for a different user/virtualenv.
+Diagnostic hint: run ansible-galaxy collection list kubernetes.core and pip3 show kubernetes to confirm both the collection and its required Python library are present for the same Python environment ansible-playbook is using.
+Error: "redhat.rhacm" not found
+
+Cause: this collection name does not exist on Ansible Galaxy. RHACM resources are plain Kubernetes custom resources, not a separate vendor collection.
+Solution: use kubernetes.core.k8s and kubernetes.core.k8s_info against the correct RHACM API groups (e.g., cluster.open-cluster-management.io/v1), as done throughout this lab.
+Failed to find exact match for operator.open-cluster-management.io/v1.MultiClusterHub by [kind, name]
+
+Cause: the RHACM operator is not installed, so the MultiClusterHub CRD does not exist on this cluster.
+Diagnostic hint: run kubectl get crd multiclusterhubs.operator.open-cluster-management.io. If it returns NotFound, install RHACM first or treat this environment as a non-RHACM sandbox and focus on the kubernetes.core module mechanics instead.
+Namespace "test-cluster-ansible" is forbidden: ... cannot create resource "namespaces"
+
+Cause: the kubeconfig's current user lacks RBAC permission to create namespaces or cluster-scoped resources.
+Diagnostic hint: run kubectl auth can-i create namespaces and kubectl auth can-i create managedclusters.cluster.open-cluster-management.io to confirm your permissions before re-running the playbook.
+Conclusion
+In this lab, students built a working Ansible automation layer around RHACM by installing and using the kubernetes.core collection, writing roles that query hub status, register ManagedCluster resources, and deploy applications through Channel, PlacementRule, and Subscription custom resources. Along the way, students learned to verify prerequisites explicitly â�� checking for the MultiClusterHub CRD, the ManagedCluster CRD, and the Prometheus Operator CRDs â�� rather than assuming a failed lookup means broken automation. The validation playbook tied these pieces together into a single repeatable check with a generated report, mirroring how real GitOps and cluster-fleet automation pipelines confirm state after applying changes. From here, students can extend this project by adding real managed clusters with klusterlet agents, wiring the Subscription's PlacementRule to live cluster labels, or integrating the validation playbook into a CI pipeline that runs after every automation change.

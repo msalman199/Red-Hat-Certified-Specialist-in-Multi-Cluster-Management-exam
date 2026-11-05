@@ -1,0 +1,47 @@
+---
+- name: Validate RHACM-Ansible Integration
+  hosts: rhacm_hubs
+  gather_facts: true
+  tasks:
+    - name: Check ManagedCluster test-cluster-ansible
+      kubernetes.core.k8s_info:
+        api_version: cluster.open-cluster-management.io/v1
+        kind: ManagedCluster
+        name: test-cluster-ansible
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: mc_check
+      ignore_errors: true
+
+    - name: Check Subscription nginx-demo-subscription
+      kubernetes.core.k8s_info:
+        api_version: apps.open-cluster-management.io/v1
+        kind: Subscription
+        name: nginx-demo-subscription
+        namespace: rhacm-applications
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: sub_check
+      ignore_errors: true
+
+    - name: Build validation results
+      ansible.builtin.set_fact:
+        validation_results:
+          - component: "ManagedCluster"
+            found: "{{ (mc_check.resources is defined) and (mc_check.resources | length > 0) }}"
+          - component: "Subscription"
+            found: "{{ (sub_check.resources is defined) and (sub_check.resources | length > 0) }}"
+
+    - name: Display validation summary
+      ansible.builtin.debug:
+        msg: "{{ item.component }}: {{ 'FOUND' if item.found else 'MISSING' }}"
+      loop: "{{ validation_results }}"
+
+    - name: Write validation report to a local file
+      ansible.builtin.copy:
+        content: |
+          RHACM-Ansible Integration Validation Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          {% for item in validation_results %}
+          {{ item.component }}: {{ 'FOUND' if item.found else 'MISSING' }}
+          {% endfor %}
+        dest: /tmp/rhacm-ansible-validation-report.txt
+      delegate_to: localhost

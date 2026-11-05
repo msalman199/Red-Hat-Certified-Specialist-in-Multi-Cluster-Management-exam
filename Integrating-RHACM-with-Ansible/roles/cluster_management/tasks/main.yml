@@ -1,0 +1,30 @@
+---
+- name: Create namespace for the managed cluster
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ cluster_name }}"
+
+- name: Create ManagedCluster resource
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: cluster.open-cluster-management.io/v1
+      kind: ManagedCluster
+      metadata:
+        name: "{{ cluster_name }}"
+        labels:
+          cloud: "{{ cloud_provider | default('auto-detect') }}"
+          environment: "{{ cluster_environment | default('development') }}"
+      spec:
+        hubAcceptsClient: true
+  register: mc_result
+
+- name: Report ManagedCluster creation result
+  ansible.builtin.debug:
+    msg: "ManagedCluster '{{ cluster_name }}' changed: {{ mc_result.changed }}"
