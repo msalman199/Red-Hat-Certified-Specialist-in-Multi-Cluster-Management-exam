@@ -1,0 +1,573 @@
+Lab 10: Creating and Managing GitOps Subscriptions
+Objectives
+By the end of this lab, you will be able to:
+
+Understand GitOps principles and their application in multi-cluster environments
+Configure GitOps subscriptions using Red Hat Advanced Cluster Management (RHACM)
+Set up GitHub repositories for GitOps-style application deployment
+Validate GitOps workflows using ArgoCD integration
+Manage application lifecycle across multiple clusters using GitOps methodology
+Troubleshoot common GitOps subscription issues
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes concepts (pods, deployments, services)
+Familiarity with Git version control system
+Knowledge of YAML syntax and structure
+Understanding of container concepts and Docker
+Basic command-line interface experience
+Completed previous RHACM labs or equivalent knowledge
+Required Tools and Access
+GitHub account (free tier is sufficient)
+Access to Red Hat Advanced Cluster Management hub cluster
+At least two managed clusters registered with RHACM
+kubectl CLI tool configured
+Git CLI tool installed
+Ready-to-Use Cloud Machines
+Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment. No need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+RHACM hub cluster with web console access
+Two managed clusters (cluster1 and cluster2)
+kubectl configured for all clusters
+Git CLI tools
+Text editors (vim, nano)
+All required RHACM operators pre-installed
+Task 1: Configure GitOps Subscriptions for Application Deployment
+Subtask 1.1: Create GitHub Repository Structure
+First, we'll create a GitHub repository to store our application manifests and GitOps configuration.
+
+Create a new GitHub repository
+
+Navigate to GitHub.com and sign in to your account
+Click the New button to create a new repository
+Name your repository: gitops-lab-apps
+Make it Public (required for this lab)
+Initialize with a README file
+Click Create repository
+Clone the repository to your lab environment
+
+# Replace 'your-username' with your actual GitHub username
+git clone https://github.com/your-username/gitops-lab-apps.git
+cd gitops-lab-apps
+Create the directory structure for GitOps
+# Create directories for different environments and applications
+mkdir -p apps/nginx-app/base
+mkdir -p apps/nginx-app/overlays/development
+mkdir -p apps/nginx-app/overlays/production
+mkdir -p clusters/cluster1
+mkdir -p clusters/cluster2
+Subtask 1.2: Create Application Manifests
+Create base application manifests
+Create the base nginx deployment:
+
+cat > apps/nginx-app/base/deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+EOF
+Create service manifest
+cat > apps/nginx-app/base/service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  labels:
+    app: nginx
+spec:
+  selector:
+    app: nginx
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+Create namespace manifest
+cat > apps/nginx-app/base/namespace.yaml << 'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nginx-app
+  labels:
+    name: nginx-app
+EOF
+Create kustomization file for base
+cat > apps/nginx-app/base/kustomization.yaml << 'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- deployment.yaml
+- service.yaml
+
+commonLabels:
+  app.kubernetes.io/name: nginx-app
+  app.kubernetes.io/version: "1.0"
+EOF
+Subtask 1.3: Create Environment-Specific Overlays
+Create development overlay
+cat > apps/nginx-app/overlays/development/kustomization.yaml << 'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nginx-app
+
+resources:
+- ../../base
+
+patchesStrategicMerge:
+- replica-patch.yaml
+
+commonLabels:
+  environment: development
+EOF
+Create development replica patch
+cat > apps/nginx-app/overlays/development/replica-patch.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 1
+EOF
+Create production overlay
+cat > apps/nginx-app/overlays/production/kustomization.yaml << 'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nginx-app
+
+resources:
+- ../../base
+
+patchesStrategicMerge:
+- replica-patch.yaml
+
+commonLabels:
+  environment: production
+EOF
+Create production replica patch
+cat > apps/nginx-app/overlays/production/replica-patch.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+EOF
+Subtask 1.4: Create RHACM Channel and Subscription
+Create Git channel for RHACM
+cat > clusters/cluster1/channel.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: Channel
+metadata:
+  name: gitops-lab-channel
+  namespace: gitops-lab-apps
+spec:
+  type: Git
+  pathname: https://github.com/your-username/gitops-lab-apps.git
+  secretRef:
+    name: git-secret
+EOF
+Note: Replace your-username with your actual GitHub username.
+
+Create namespace for GitOps resources
+cat > clusters/cluster1/namespace.yaml << 'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitops-lab-apps
+EOF
+Create subscription for development cluster
+cat > clusters/cluster1/subscription.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: nginx-app-dev-subscription
+  namespace: gitops-lab-apps
+  labels:
+    app: nginx-app
+spec:
+  channel: gitops-lab-apps/gitops-lab-channel
+  placement:
+    placementRef:
+      name: dev-placement
+      kind: PlacementRule
+  packageFilter:
+    filterRef:
+      name: nginx-app-dev
+  packageOverrides:
+  - packageName: nginx-app
+    packageOverrides:
+    - path: apps/nginx-app/overlays/development
+EOF
+Create placement rule for development
+cat > clusters/cluster1/placement-rule.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: dev-placement
+  namespace: gitops-lab-apps
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: development
+  clusterReplicas: 1
+EOF
+Create subscription for production cluster
+cat > clusters/cluster2/subscription.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: nginx-app-prod-subscription
+  namespace: gitops-lab-apps
+  labels:
+    app: nginx-app
+spec:
+  channel: gitops-lab-apps/gitops-lab-channel
+  placement:
+    placementRef:
+      name: prod-placement
+      kind: PlacementRule
+  packageFilter:
+    filterRef:
+      name: nginx-app-prod
+  packageOverrides:
+  - packageName: nginx-app
+    packageOverrides:
+    - path: apps/nginx-app/overlays/production
+EOF
+Create placement rule for production
+cat > clusters/cluster2/placement-rule.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: prod-placement
+  namespace: gitops-lab-apps
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+  clusterReplicas: 1
+EOF
+Subtask 1.5: Commit and Push Changes to GitHub
+Add all files to Git
+git add .
+Commit the changes
+git commit -m "Initial GitOps setup with nginx application and RHACM subscriptions"
+Push to GitHub
+git push origin main
+Subtask 1.6: Apply GitOps Resources to RHACM Hub
+Switch to hub cluster context
+kubectl config use-context hub-cluster
+Create the GitOps namespace
+kubectl apply -f clusters/cluster1/namespace.yaml
+Create Git secret for private repositories (if needed)
+For public repositories, this step is optional, but it's good practice:
+
+kubectl create secret generic git-secret \
+  --from-literal=user=your-github-username \
+  --from-literal=accessToken=your-github-token \
+  -n gitops-lab-apps
+Note: For this lab with public repository, you can skip the secret creation.
+
+Apply the channel
+# Update the channel file with your GitHub username first
+sed -i 's/your-username/your-actual-username/g' clusters/cluster1/channel.yaml
+kubectl apply -f clusters/cluster1/channel.yaml
+Label your managed clusters
+# Label cluster1 as development
+kubectl label managedcluster cluster1 environment=development
+
+# Label cluster2 as production  
+kubectl label managedcluster cluster2 environment=production
+Apply placement rules
+kubectl apply -f clusters/cluster1/placement-rule.yaml
+kubectl apply -f clusters/cluster2/placement-rule.yaml
+Apply subscriptions
+kubectl apply -f clusters/cluster1/subscription.yaml
+kubectl apply -f clusters/cluster2/subscription.yaml
+Task 2: Validate GitOps Workflow Using ArgoCD and RHACM
+Subtask 2.1: Verify RHACM Subscription Status
+Check subscription status in RHACM console
+Access the RHACM web console and navigate to:
+
+Applications → Subscriptions
+Verify both subscriptions are created and show Subscribed status
+Check subscription status via CLI
+# Check subscriptions
+kubectl get subscriptions -n gitops-lab-apps
+
+# Get detailed subscription information
+kubectl describe subscription nginx-app-dev-subscription -n gitops-lab-apps
+kubectl describe subscription nginx-app-prod-subscription -n gitops-lab-apps
+Verify placement rules
+# Check placement rules
+kubectl get placementrules -n gitops-lab-apps
+
+# Check which clusters are selected
+kubectl describe placementrule dev-placement -n gitops-lab-apps
+kubectl describe placementrule prod-placement -n gitops-lab-apps
+Subtask 2.2: Install and Configure ArgoCD
+Create ArgoCD namespace
+kubectl create namespace argocd
+Install ArgoCD
+# Install ArgoCD using the stable release
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+Wait for ArgoCD pods to be ready
+# Wait for all ArgoCD pods to be running
+kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+Get ArgoCD admin password
+# Get the initial admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+echo
+Expose ArgoCD server
+# Patch ArgoCD server service to NodePort for access
+kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"NodePort"}}'
+
+# Get the NodePort
+kubectl get svc argocd-server -n argocd
+Subtask 2.3: Create ArgoCD Applications
+Access ArgoCD UI
+Get the NodePort from the previous step
+Access ArgoCD at: http://your-hub-cluster-ip:nodeport
+Login with username: admin and the password from step 4
+Create ArgoCD application for development
+cat > argocd-app-dev.yaml << 'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-app-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/gitops-lab-apps.git
+    targetRevision: HEAD
+    path: apps/nginx-app/overlays/development
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nginx-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+EOF
+Create ArgoCD application for production
+cat > argocd-app-prod.yaml << 'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-app-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/gitops-lab-apps.git
+    targetRevision: HEAD
+    path: apps/nginx-app/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nginx-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+EOF
+Update with your GitHub username and apply
+# Update the files with your GitHub username
+sed -i 's/your-username/your-actual-username/g' argocd-app-dev.yaml
+sed -i 's/your-username/your-actual-username/g' argocd-app-prod.yaml
+
+# Apply the ArgoCD applications
+kubectl apply -f argocd-app-dev.yaml
+kubectl apply -f argocd-app-prod.yaml
+Subtask 2.4: Verify Application Deployment
+Check ArgoCD applications status
+# List ArgoCD applications
+kubectl get applications -n argocd
+
+# Get detailed application status
+kubectl describe application nginx-app-dev -n argocd
+kubectl describe application nginx-app-prod -n argocd
+Verify applications in target clusters
+# Switch to cluster1 (development)
+kubectl config use-context cluster1
+
+# Check if nginx application is deployed
+kubectl get pods -n nginx-app
+kubectl get deployments -n nginx-app
+kubectl get services -n nginx-app
+
+# Switch to cluster2 (production)
+kubectl config use-context cluster2
+
+# Check if nginx application is deployed
+kubectl get pods -n nginx-app
+kubectl get deployments -n nginx-app
+kubectl get services -n nginx-app
+Verify replica differences
+The development cluster should have 1 replica, while production should have 3 replicas as defined in our overlays.
+
+# Check development cluster replicas
+kubectl config use-context cluster1
+kubectl get deployment nginx-deployment -n nginx-app -o jsonpath='{.spec.replicas}'
+echo
+
+# Check production cluster replicas  
+kubectl config use-context cluster2
+kubectl get deployment nginx-deployment -n nginx-app -o jsonpath='{.spec.replicas}'
+echo
+Subtask 2.5: Test GitOps Workflow
+Make a change to the application
+# Go back to your local repository
+cd gitops-lab-apps
+
+# Update the nginx image version in base deployment
+sed -i 's/nginx:1.21/nginx:1.22/g' apps/nginx-app/base/deployment.yaml
+Commit and push the change
+git add apps/nginx-app/base/deployment.yaml
+git commit -m "Update nginx image to version 1.22"
+git push origin main
+Monitor the GitOps sync
+# Switch back to hub cluster
+kubectl config use-context hub-cluster
+
+# Watch ArgoCD applications for sync
+kubectl get applications -n argocd -w
+Verify the update was applied
+# Check development cluster
+kubectl config use-context cluster1
+kubectl get deployment nginx-deployment -n nginx-app -o jsonpath='{.spec.template.spec.containers[0].image}'
+echo
+
+# Check production cluster
+kubectl config use-context cluster2  
+kubectl get deployment nginx-deployment -n nginx-app -o jsonpath='{.spec.template.spec.containers[0].image}'
+echo
+Subtask 2.6: Monitor and Troubleshoot
+Check RHACM application status
+# Switch to hub cluster
+kubectl config use-context hub-cluster
+
+# Check application status in RHACM
+kubectl get applications.app.k8s.io -A
+
+# Check subscription events
+kubectl get events -n gitops-lab-apps --sort-by='.lastTimestamp'
+Common troubleshooting commands
+# Check subscription status
+kubectl get subscriptions -n gitops-lab-apps -o yaml
+
+# Check placement rule decisions
+kubectl get placementrules -n gitops-lab-apps -o yaml
+
+# Check managed cluster labels
+kubectl get managedclusters --show-labels
+
+# Check ArgoCD application health
+kubectl get applications -n argocd -o wide
+View ArgoCD logs if needed
+# Check ArgoCD server logs
+kubectl logs deployment/argocd-server -n argocd
+
+# Check ArgoCD application controller logs
+kubectl logs deployment/argocd-application-controller -n argocd
+Troubleshooting Common Issues
+Issue 1: Subscription Not Syncing
+Symptoms: Subscription shows as created but applications are not deployed to target clusters.
+
+Solutions:
+
+Verify cluster labels match placement rule selectors
+Check GitHub repository accessibility
+Verify Git secret if using private repository
+Check subscription path configuration
+# Debug commands
+kubectl describe subscription nginx-app-dev-subscription -n gitops-lab-apps
+kubectl get managedclusters --show-labels
+kubectl describe placementrule dev-placement -n gitops-lab-apps
+Issue 2: ArgoCD Application Out of Sync
+Symptoms: ArgoCD shows application as "OutOfSync" or "Unknown".
+
+Solutions:
+
+Check repository connectivity
+Verify path exists in repository
+Manual sync from ArgoCD UI
+Check ArgoCD application controller logs
+# Manual sync via CLI
+kubectl patch application nginx-app-dev -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+Issue 3: Different Replica Counts Not Applied
+Symptoms: Both development and production clusters show same replica count.
+
+Solutions:
+
+Verify kustomization overlay structure
+Check patch files are correctly applied
+Validate kustomize build locally
+# Test kustomize build locally
+cd apps/nginx-app/overlays/development
+kustomize build .
+
+cd ../production  
+kustomize build .
+Conclusion
+In this lab, you have successfully:
+
+Implemented GitOps Architecture: Created a complete GitOps setup using GitHub as the source of truth for application configurations and deployments.
+
+Configured Multi-Cluster Management: Set up RHACM subscriptions to manage applications across multiple Kubernetes clusters with environment-specific configurations.
+
+Integrated ArgoCD: Deployed and configured ArgoCD to provide continuous deployment capabilities and enhanced GitOps workflow visualization.
+
+Validated GitOps Workflow: Tested the complete GitOps pipeline by making changes to the Git repository and observing automatic synchronization across clusters.
+
+Applied Environment-Specific Configurations: Used Kustomize overlays to deploy different configurations (replica counts) to development and production environments.
+
+Key Takeaways
+GitOps Benefits: GitOps provides declarative, version-controlled, and auditable application deployment processes
+Multi-Cluster Management: RHACM enables centralized management of applications across multiple Kubernetes clusters
+Automation: Automated synchronization reduces manual errors and ensures consistency across environments
+Observability: ArgoCD provides excellent visibility into application deployment status and health
+Real-World Applications
+This GitOps approach is widely used in enterprise environments for:
+
+Continuous Deployment: Automated application updates based on Git commits
+Environment Promotion: Consistent deployment processes from development to production
+Disaster Recovery: Quick restoration of applications using Git-stored configurations
+Compliance: Auditable deployment history through Git version control
+Multi-Tenant Management: Isolated application deployments across different teams and environments
+The skills learned in this lab are directly applicable to the Red Hat Certified Specialist in Multi Cluster Management exam and real-world Kubernetes operations at scale.
