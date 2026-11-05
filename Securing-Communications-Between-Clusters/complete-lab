@@ -1,0 +1,507 @@
+Lab 14: Securing Communications Between Clusters
+Objectives
+By the end of this lab, you will be able to:
+
+Configure secure TLS communication channels between Red Hat Advanced Cluster Management (RHACM) hub and managed clusters
+Implement certificate-based authentication for cluster communications
+Validate security configurations using OpenShift CLI (oc) and RHACM CLI commands
+Troubleshoot common TLS communication issues in multi-cluster environments
+Understand the importance of encrypted communications in enterprise Kubernetes deployments
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Kubernetes and OpenShift concepts
+Familiarity with TLS/SSL certificates and PKI infrastructure
+Experience with command-line interfaces (CLI)
+Knowledge of YAML configuration files
+Completion of previous RHACM labs or equivalent experience
+Understanding of network security principles
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install software.
+
+Your lab environment includes:
+
+RHACM Hub cluster (pre-installed)
+Two managed clusters ready for configuration
+OpenShift CLI (oc) tools
+Certificate management utilities
+Network connectivity between clusters
+Task 1: Configure Secure Communication Between Hub and Managed Clusters Using TLS
+Subtask 1.1: Verify Current Cluster Status
+First, let's examine the current state of our clusters and their communication settings.
+
+Access the hub cluster and verify cluster status:
+# Switch to the hub cluster context
+oc config use-context hub-cluster
+
+# Check the current managed clusters
+oc get managedclusters
+
+# Verify RHACM installation status
+oc get pods -n open-cluster-management
+Examine current certificate configuration:
+# Check existing certificates in the hub cluster
+oc get certificates -n open-cluster-management
+
+# View current TLS secrets
+oc get secrets -n open-cluster-management | grep tls
+Subtask 1.2: Generate TLS Certificates for Secure Communication
+Now we'll create the necessary certificates for secure communication between clusters.
+
+Create a certificate authority (CA) for cluster communication:
+# Create a directory for certificate management
+mkdir -p ~/cluster-certs
+cd ~/cluster-certs
+
+# Generate CA private key
+openssl genrsa -out ca-key.pem 4096
+
+# Generate CA certificate
+openssl req -new -x509 -days 365 -key ca-key.pem -out ca-cert.pem -subj "/CN=RHACM-CA/O=Red Hat/C=US"
+
+# Verify CA certificate
+openssl x509 -in ca-cert.pem -text -noout
+Generate hub cluster certificate:
+# Generate hub cluster private key
+openssl genrsa -out hub-key.pem 4096
+
+# Create certificate signing request for hub
+openssl req -new -key hub-key.pem -out hub-csr.pem -subj "/CN=rhacm-hub/O=Red Hat/C=US"
+
+# Sign the hub certificate with CA
+openssl x509 -req -days 365 -in hub-csr.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out hub-cert.pem
+
+# Verify hub certificate
+openssl x509 -in hub-cert.pem -text -noout
+Subtask 1.3: Configure Hub Cluster TLS Settings
+Create TLS secret in the hub cluster:
+# Create TLS secret for hub cluster
+oc create secret tls hub-tls-secret \
+  --cert=hub-cert.pem \
+  --key=hub-key.pem \
+  -n open-cluster-management
+
+# Create CA secret
+oc create secret generic ca-secret \
+  --from-file=ca.crt=ca-cert.pem \
+  -n open-cluster-management
+Update RHACM hub configuration for TLS:
+# Create hub TLS configuration
+cat << EOF > hub-tls-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hub-tls-config
+  namespace: open-cluster-management
+data:
+  tls.enabled: "true"
+  tls.certFile: "/etc/tls/tls.crt"
+  tls.keyFile: "/etc/tls/tls.key"
+  tls.caFile: "/etc/ca/ca.crt"
+EOF
+
+# Apply the configuration
+oc apply -f hub-tls-config.yaml
+Update the multiclusterhub resource:
+# Get current multiclusterhub configuration
+oc get multiclusterhub -n open-cluster-management -o yaml > mch-backup.yaml
+
+# Create updated multiclusterhub configuration
+cat << EOF > mch-tls-update.yaml
+apiVersion: operator.open-cluster-management.io/v1
+kind: MultiClusterHub
+metadata:
+  name: multiclusterhub
+  namespace: open-cluster-management
+spec:
+  ingress:
+    sslCiphers:
+    - "ECDHE-ECDSA-AES256-GCM-SHA384"
+    - "ECDHE-RSA-AES256-GCM-SHA384"
+    - "ECDHE-ECDSA-AES128-GCM-SHA256"
+    - "ECDHE-RSA-AES128-GCM-SHA256"
+  customCAConfigmap: ca-secret
+EOF
+
+# Apply the updated configuration
+oc apply -f mch-tls-update.yaml
+Subtask 1.4: Configure Managed Clusters for Secure Communication
+Generate certificates for managed clusters:
+# Generate certificate for managed cluster 1
+openssl genrsa -out managed1-key.pem 4096
+openssl req -new -key managed1-key.pem -out managed1-csr.pem -subj "/CN=managed-cluster-1/O=Red Hat/C=US"
+openssl x509 -req -days 365 -in managed1-csr.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out managed1-cert.pem
+
+# Generate certificate for managed cluster 2
+openssl genrsa -out managed2-key.pem 4096
+openssl req -new -key managed2-key.pem -out managed2-csr.pem -subj "/CN=managed-cluster-2/O=Red Hat/C=US"
+openssl x509 -req -days 365 -in managed2-csr.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out managed2-cert.pem
+Configure managed cluster 1:
+# Switch to managed cluster 1 context
+oc config use-context managed-cluster-1
+
+# Create TLS secret for managed cluster 1
+oc create secret tls managed-cluster-tls \
+  --cert=../cluster-certs/managed1-cert.pem \
+  --key=../cluster-certs/managed1-key.pem \
+  -n open-cluster-management-agent
+
+# Create CA secret
+oc create secret generic ca-secret \
+  --from-file=ca.crt=../cluster-certs/ca-cert.pem \
+  -n open-cluster-management-agent
+Configure managed cluster 2:
+# Switch to managed cluster 2 context
+oc config use-context managed-cluster-2
+
+# Create TLS secret for managed cluster 2
+oc create secret tls managed-cluster-tls \
+  --cert=../cluster-certs/managed2-cert.pem \
+  --key=../cluster-certs/managed2-key.pem \
+  -n open-cluster-management-agent
+
+# Create CA secret
+oc create secret generic ca-secret \
+  --from-file=ca.crt=../cluster-certs/ca-cert.pem \
+  -n open-cluster-management-agent
+Subtask 1.5: Update Klusterlet Configuration for TLS
+Update klusterlet configuration on managed cluster 1:
+# Switch to managed cluster 1
+oc config use-context managed-cluster-1
+
+# Create klusterlet TLS configuration
+cat << EOF > klusterlet-tls-config.yaml
+apiVersion: operator.open-cluster-management.io/v1
+kind: Klusterlet
+metadata:
+  name: klusterlet
+spec:
+  clusterName: managed-cluster-1
+  namespace: open-cluster-management-agent
+  registrationImagePullSpec: quay.io/open-cluster-management/registration:latest
+  workImagePullSpec: quay.io/open-cluster-management/work:latest
+  externalServerURLs:
+  - url: https://multicloud-console.apps.hub-cluster.example.com
+    caBundle: |
+$(cat ../cluster-certs/ca-cert.pem | sed 's/^/      /')
+  clientCertPolicy: SelfSigned
+EOF
+
+# Apply the configuration
+oc apply -f klusterlet-tls-config.yaml
+Update klusterlet configuration on managed cluster 2:
+# Switch to managed cluster 2
+oc config use-context managed-cluster-2
+
+# Create klusterlet TLS configuration
+cat << EOF > klusterlet-tls-config.yaml
+apiVersion: operator.open-cluster-management.io/v1
+kind: Klusterlet
+metadata:
+  name: klusterlet
+spec:
+  clusterName: managed-cluster-2
+  namespace: open-cluster-management-agent
+  registrationImagePullSpec: quay.io/open-cluster-management/registration:latest
+  workImagePullSpec: quay.io/open-cluster-management/work:latest
+  externalServerURLs:
+  - url: https://multicloud-console.apps.hub-cluster.example.com
+    caBundle: |
+$(cat ../cluster-certs/ca-cert.pem | sed 's/^/      /')
+  clientCertPolicy: SelfSigned
+EOF
+
+# Apply the configuration
+oc apply -f klusterlet-tls-config.yaml
+Task 2: Test Security Settings Using oc and RHACM CLI Commands
+Subtask 2.1: Verify TLS Configuration on Hub Cluster
+Check hub cluster TLS configuration:
+# Switch back to hub cluster
+oc config use-context hub-cluster
+
+# Verify TLS secrets are created
+oc get secrets -n open-cluster-management | grep tls
+
+# Check certificate details
+oc get secret hub-tls-secret -n open-cluster-management -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
+Verify multiclusterhub status:
+# Check multiclusterhub status
+oc get multiclusterhub -n open-cluster-management
+
+# Verify all components are running with TLS
+oc get pods -n open-cluster-management
+Subtask 2.2: Test Managed Cluster Connectivity
+Verify managed cluster registration with TLS:
+# Check managed cluster status
+oc get managedclusters
+
+# Verify cluster certificates
+oc get managedcluster managed-cluster-1 -o yaml | grep -A 10 -B 10 certificate
+
+# Check cluster conditions
+oc describe managedcluster managed-cluster-1
+oc describe managedcluster managed-cluster-2
+Test cluster communication:
+# Create a test policy to verify communication
+cat << EOF > test-tls-policy.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: test-tls-communication
+  namespace: default
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: test-tls-config
+      spec:
+        remediationAction: inform
+        severity: low
+        object-templates:
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: tls-test-config
+              namespace: default
+            data:
+              message: "TLS communication test successful"
+EOF
+
+# Apply the test policy
+oc apply -f test-tls-policy.yaml
+Create placement binding for the test policy:
+# Create placement rule
+cat << EOF > test-placement-rule.yaml
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: test-tls-placement
+  namespace: default
+spec:
+  clusterConditions:
+  - status: "True"
+    type: ManagedClusterConditionAvailable
+  clusterSelector:
+    matchExpressions:
+    - key: name
+      operator: In
+      values:
+      - managed-cluster-1
+      - managed-cluster-2
+EOF
+
+# Apply placement rule
+oc apply -f test-placement-rule.yaml
+
+# Create placement binding
+cat << EOF > test-placement-binding.yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: test-tls-binding
+  namespace: default
+placementRef:
+  name: test-tls-placement
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+- name: test-tls-communication
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
+EOF
+
+# Apply placement binding
+oc apply -f test-placement-binding.yaml
+Subtask 2.3: Monitor and Validate TLS Communication
+Check policy compliance status:
+# Wait for policy propagation (30 seconds)
+sleep 30
+
+# Check policy status
+oc get policy test-tls-communication -o yaml
+
+# Check compliance on managed clusters
+oc get policies.policy.open-cluster-management.io -A
+Verify TLS handshake and certificate validation:
+# Test TLS connection to hub cluster
+openssl s_client -connect multicloud-console.apps.hub-cluster.example.com:443 -CAfile ~/cluster-certs/ca-cert.pem -verify 5
+
+# Check certificate chain validation
+curl -v --cacert ~/cluster-certs/ca-cert.pem https://multicloud-console.apps.hub-cluster.example.com/multicloud/clusters
+Subtask 2.4: Advanced TLS Validation Tests
+Test certificate rotation capability:
+# Generate new certificates with shorter validity
+openssl genrsa -out hub-key-new.pem 4096
+openssl req -new -key hub-key-new.pem -out hub-csr-new.pem -subj "/CN=rhacm-hub-renewed/O=Red Hat/C=US"
+openssl x509 -req -days 30 -in hub-csr-new.pem -CA ~/cluster-certs/ca-cert.pem -CAkey ~/cluster-certs/ca-key.pem -CAcreateserial -out hub-cert-new.pem
+
+# Update TLS secret with new certificate
+oc create secret tls hub-tls-secret-new \
+  --cert=hub-cert-new.pem \
+  --key=hub-key-new.pem \
+  -n open-cluster-management --dry-run=client -o yaml | oc apply -f -
+Validate cipher suite configuration:
+# Test supported cipher suites
+nmap --script ssl-enum-ciphers -p 443 multicloud-console.apps.hub-cluster.example.com
+
+# Verify only secure ciphers are enabled
+openssl s_client -connect multicloud-console.apps.hub-cluster.example.com:443 -cipher 'ECDHE-RSA-AES256-GCM-SHA384'
+Subtask 2.5: Troubleshooting TLS Issues
+Common troubleshooting commands:
+# Check certificate expiration
+for cert in ~/cluster-certs/*.pem; do
+  echo "Certificate: $cert"
+  openssl x509 -in "$cert" -noout -dates
+  echo "---"
+done
+
+# Verify certificate chain
+openssl verify -CAfile ~/cluster-certs/ca-cert.pem ~/cluster-certs/hub-cert.pem
+
+# Check klusterlet agent logs
+oc config use-context managed-cluster-1
+oc logs -n open-cluster-management-agent deployment/klusterlet-registration-agent
+
+# Check hub cluster logs
+oc config use-context hub-cluster
+oc logs -n open-cluster-management deployment/cluster-manager-registration-controller
+Network connectivity tests:
+# Test port connectivity
+nc -zv multicloud-console.apps.hub-cluster.example.com 443
+
+# Test DNS resolution
+nslookup multicloud-console.apps.hub-cluster.example.com
+
+# Verify firewall rules (if applicable)
+iptables -L | grep 443
+Verification and Testing
+Final Validation Steps
+Comprehensive cluster status check:
+# Switch to hub cluster
+oc config use-context hub-cluster
+
+# Final status verification
+echo "=== Managed Clusters Status ==="
+oc get managedclusters
+
+echo "=== Policy Compliance Status ==="
+oc get policies -A
+
+echo "=== Certificate Status ==="
+oc get certificates -n open-cluster-management
+
+echo "=== TLS Secrets Status ==="
+oc get secrets -n open-cluster-management | grep tls
+Security validation report:
+# Generate security report
+cat << EOF > security-validation-report.sh
+#!/bin/bash
+echo "RHACM TLS Security Validation Report"
+echo "===================================="
+echo "Date: \$(date)"
+echo ""
+
+echo "1. Hub Cluster TLS Configuration:"
+oc get secret hub-tls-secret -n open-cluster-management -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject -dates
+
+echo ""
+echo "2. Managed Clusters Status:"
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status
+
+echo ""
+echo "3. Policy Compliance:"
+oc get policies.policy.open-cluster-management.io -A --no-headers | wc -l | xargs echo "Total policies deployed:"
+
+echo ""
+echo "4. TLS Cipher Validation:"
+echo "Testing secure cipher suites..."
+openssl s_client -connect multicloud-console.apps.hub-cluster.example.com:443 -cipher 'ECDHE-RSA-AES256-GCM-SHA384' < /dev/null 2>/dev/null | grep "Cipher is"
+
+echo ""
+echo "Security validation completed successfully!"
+EOF
+
+chmod +x security-validation-report.sh
+./security-validation-report.sh
+Troubleshooting Common Issues
+Issue 1: Certificate Validation Failures
+Symptoms: Managed clusters showing as unavailable or disconnected
+
+Solution:
+
+# Check certificate validity
+openssl x509 -in ~/cluster-certs/ca-cert.pem -noout -dates
+
+# Verify certificate chain
+openssl verify -CAfile ~/cluster-certs/ca-cert.pem ~/cluster-certs/managed1-cert.pem
+
+# Recreate certificates if expired
+# Follow Subtask 1.2 to generate new certificates
+Issue 2: TLS Handshake Failures
+Symptoms: Connection timeouts or SSL handshake errors
+
+Solution:
+
+# Check network connectivity
+telnet multicloud-console.apps.hub-cluster.example.com 443
+
+# Verify cipher suite compatibility
+openssl s_client -connect multicloud-console.apps.hub-cluster.example.com:443 -tls1_2
+
+# Update cipher suite configuration if needed
+Issue 3: Policy Deployment Failures
+Symptoms: Policies not propagating to managed clusters
+
+Solution:
+
+# Check placement rule status
+oc get placementrule test-tls-placement -o yaml
+
+# Verify cluster labels and selectors
+oc get managedclusters --show-labels
+
+# Check policy controller logs
+oc logs -n open-cluster-management deployment/governance-policy-propagator
+Conclusion
+Congratulations! You have successfully completed Lab 14: Securing Communications Between Clusters. In this comprehensive lab, you have accomplished the following:
+
+Key Achievements
+Implemented End-to-End TLS Security: You configured secure TLS communication channels between the RHACM hub cluster and multiple managed clusters, ensuring all inter-cluster communications are encrypted and authenticated.
+
+Certificate Management Mastery: You learned to generate, deploy, and manage TLS certificates using OpenSSL, including creating a Certificate Authority (CA) and signing certificates for different cluster components.
+
+Advanced Security Configuration: You updated RHACM components including MultiClusterHub and Klusterlet configurations to enforce TLS security policies and cipher suite restrictions.
+
+Comprehensive Testing and Validation: You performed thorough testing using both OpenShift CLI (oc) commands and RHACM-specific tools to verify secure communications and policy compliance across clusters.
+
+Troubleshooting Expertise: You gained hands-on experience with common TLS-related issues and learned systematic approaches to diagnose and resolve security configuration problems.
+
+Why This Matters
+In enterprise Kubernetes environments, securing communications between clusters is critical for:
+
+Data Protection: Preventing unauthorized access to sensitive workload data and cluster management information
+Compliance Requirements: Meeting industry standards and regulatory requirements for data encryption in transit
+Zero Trust Architecture: Implementing security principles where no network communication is trusted by default
+Operational Security: Ensuring that cluster management operations cannot be intercepted or tampered with by malicious actors
+Real-World Applications
+The skills you've developed in this lab directly apply to:
+
+Multi-cloud deployments where clusters span different cloud providers and regions
+Hybrid cloud architectures connecting on-premises and cloud-based Kubernetes clusters
+Edge computing scenarios where remote clusters need secure communication with central management hubs
+Regulated industries such as healthcare, finance, and government where encryption is mandatory
+Next Steps
+To further enhance your multi-cluster security expertise, consider:
+
+Exploring certificate rotation automation using cert-manager
+Implementing mutual TLS (mTLS) for service-to-service communications
+Integrating with enterprise PKI infrastructure
+Setting up monitoring and alerting for certificate expiration
+Learning about service mesh security patterns with Istio or similar technologies
+You are now well-prepared for the Red Hat Certified Specialist in Multi Cluster Management exam and ready to implement secure multi-cluster architectures in production environments.

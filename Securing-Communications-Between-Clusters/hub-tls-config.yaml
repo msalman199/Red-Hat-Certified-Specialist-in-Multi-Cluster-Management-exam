@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hub-tls-config
+  namespace: open-cluster-management
+data:
+  tls.enabled: "true"
+  tls.certFile: "/etc/tls/tls.crt"
+  tls.keyFile: "/etc/tls/tls.key"
+  tls.caFile: "/etc/ca/ca.crt"
