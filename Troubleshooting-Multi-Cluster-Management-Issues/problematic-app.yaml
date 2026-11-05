@@ -1,0 +1,42 @@
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: problematic-app
+  namespace: default
+spec:
+  componentKinds:
+  - group: apps.open-cluster-management.io
+    kind: Subscription
+  descriptor: {}
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - problematic-app
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: Subscription
+metadata:
+  name: problematic-app-subscription
+  namespace: default
+  labels:
+    app: problematic-app
+spec:
+  channel: default/sample-channel
+  placement:
+    placementRef:
+      name: problematic-app-placement
+      kind: PlacementRule
+---
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: problematic-app-placement
+  namespace: default
+  labels:
+    app: problematic-app
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: nonexistent  # No managed cluster has this label - causes placement failure

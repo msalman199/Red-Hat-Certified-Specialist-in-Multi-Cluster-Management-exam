@@ -1,0 +1,10 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: problematic-app-placement
+  namespace: default
+  labels:
+    app: problematic-app
+spec:
+  clusterSelector:
+    matchLabels: {}
