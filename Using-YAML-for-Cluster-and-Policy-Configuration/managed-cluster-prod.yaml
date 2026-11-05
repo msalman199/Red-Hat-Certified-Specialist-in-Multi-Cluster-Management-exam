@@ -1,0 +1,16 @@
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: prod-cluster-01
+  namespace: prod-cluster-01
+  labels:
+    environment: production
+    region: us-west-2
+    cluster.open-cluster-management.io/clusterset: production
+    security-level: high
+spec:
+  hubAcceptsClient: true
+  leaseDurationSeconds: 30
+  managedClusterClientConfigs:
+  - url: https://prod-cluster-01.example.com:6443
+    caBundle: LS0tLS1CRUdJTi...

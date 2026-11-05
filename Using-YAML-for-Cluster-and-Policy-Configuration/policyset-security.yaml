@@ -1,0 +1,11 @@
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: security-policyset
+  namespace: default
+spec:
+  description: Security policies for managed clusters
+  policies:
+    - policy-namespace-security
+    - policy-pod-security-standards
+    - policy-network-security

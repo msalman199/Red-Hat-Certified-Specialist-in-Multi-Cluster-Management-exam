@@ -1,0 +1,16 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-dev-security
+  namespace: default
+placementRef:
+  name: placement-dev-clusters
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+- name: policy-namespace-security
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
+- name: policy-resource-quota
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io

@@ -1,0 +1,21 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-prod-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      security-level: high
+    matchExpressions:
+      - key: region
+        operator: In
+        values:
+          - us-west-2
+          - us-east-1
+  clusterReplicas: 1
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  schedulerName: default-scheduler

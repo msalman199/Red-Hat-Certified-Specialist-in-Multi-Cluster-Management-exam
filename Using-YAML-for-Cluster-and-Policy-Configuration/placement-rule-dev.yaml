@@ -1,0 +1,13 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-dev-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: development
+  clusterReplicas: 2
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable

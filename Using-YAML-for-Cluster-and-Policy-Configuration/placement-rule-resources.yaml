@@ -1,0 +1,22 @@
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-high-resource-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/worker
+        operator: Exists
+      - key: cluster-resource-level
+        operator: In
+        values:
+          - high
+          - medium
+  clusterReplicas: 3
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  resourceHint:
+    type: cpu
+    order: largest

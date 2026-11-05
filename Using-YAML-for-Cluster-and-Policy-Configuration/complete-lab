@@ -1,0 +1,522 @@
+Lab 17: Using YAML for Cluster and Policy Configuration
+Objectives
+By the end of this lab, you will be able to:
+
+• Write YAML definitions for clusters in Red Hat Advanced Cluster Management (RHACM) • Create policy configurations using YAML syntax • Define placement rules for cluster management • Apply YAML configurations using the OpenShift CLI (oc) • Test and validate YAML-based cluster and policy configurations • Troubleshoot common YAML configuration issues in RHACM environments
+
+Prerequisites
+Before starting this lab, you should have:
+
+• Basic understanding of Kubernetes and OpenShift concepts • Familiarity with YAML syntax and structure • Knowledge of Red Hat Advanced Cluster Management fundamentals • Experience with command-line interfaces • Understanding of cluster management concepts • Basic knowledge of policy-based governance
+
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines with all necessary tools installed. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Your lab environment includes: • OpenShift CLI (oc) pre-installed • Access to RHACM hub cluster • Text editors (vim, nano) • Sample YAML templates • Network connectivity to managed clusters
+
+Task 1: Create YAML Files for Cluster Definitions
+Subtask 1.1: Understanding Cluster YAML Structure
+First, let's examine the basic structure of a cluster definition in RHACM.
+
+Access your lab environment and open a terminal
+
+Create a working directory for your YAML files:
+
+mkdir -p ~/rhacm-lab17
+cd ~/rhacm-lab17
+Create a basic cluster definition file:
+cat > managed-cluster-dev.yaml << 'EOF'
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: dev-cluster-01
+  namespace: dev-cluster-01
+  labels:
+    environment: development
+    region: us-east-1
+    cluster.open-cluster-management.io/clusterset: development
+spec:
+  hubAcceptsClient: true
+  leaseDurationSeconds: 60
+EOF
+Create a cluster namespace definition:
+cat > cluster-namespace-dev.yaml << 'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev-cluster-01
+  labels:
+    cluster.open-cluster-management.io/managedCluster: dev-cluster-01
+EOF
+Subtask 1.2: Creating Production Cluster Configuration
+Create a production cluster definition with enhanced security settings:
+cat > managed-cluster-prod.yaml << 'EOF'
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: prod-cluster-01
+  namespace: prod-cluster-01
+  labels:
+    environment: production
+    region: us-west-2
+    cluster.open-cluster-management.io/clusterset: production
+    security-level: high
+spec:
+  hubAcceptsClient: true
+  leaseDurationSeconds: 30
+  managedClusterClientConfigs:
+  - url: https://prod-cluster-01.example.com:6443
+    caBundle: LS0tLS1CRUdJTi...
+EOF
+Create the corresponding namespace:
+cat > cluster-namespace-prod.yaml << 'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod-cluster-01
+  labels:
+    cluster.open-cluster-management.io/managedCluster: prod-cluster-01
+    environment: production
+EOF
+Subtask 1.3: Creating ClusterSet Configuration
+Define a cluster set for grouping related clusters:
+cat > clusterset-development.yaml << 'EOF'
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: development
+spec:
+  clusterSelector:
+    selectorType: ExclusiveClusterSetLabel
+EOF
+Create a production cluster set:
+cat > clusterset-production.yaml << 'EOF'
+apiVersion: cluster.open-cluster-management.io/v1beta2
+kind: ManagedClusterSet
+metadata:
+  name: production
+spec:
+  clusterSelector:
+    selectorType: ExclusiveClusterSetLabel
+EOF
+Task 2: Create YAML Files for Policy Definitions
+Subtask 2.1: Security Policy Configuration
+Create a namespace policy to ensure required namespaces exist:
+cat > policy-namespace-security.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-namespace-security
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.AC Identity Management Authentication and Access Control
+    policy.open-cluster-management.io/controls: PR.AC-4
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: policy-namespace-security
+        spec:
+          remediationAction: enforce
+          severity: high
+          namespaceSelector:
+            exclude:
+              - kube-*
+            include:
+              - default
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: Namespace
+                apiVersion: v1
+                metadata:
+                  name: security-monitoring
+                  labels:
+                    security.policy: enforced
+EOF
+Create a pod security policy:
+cat > policy-pod-security.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-pod-security-standards
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: SC System and Communications Protection
+    policy.open-cluster-management.io/controls: SC-28
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: policy-pod-security-standards
+        spec:
+          remediationAction: inform
+          severity: medium
+          namespaceSelector:
+            exclude:
+              - kube-*
+              - openshift-*
+            include:
+              - "*"
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  namespace: default
+                spec:
+                  securityContext:
+                    runAsNonRoot: true
+                    runAsUser: 1000
+                    fsGroup: 2000
+EOF
+Subtask 2.2: Resource Management Policy
+Create a resource quota policy:
+cat > policy-resource-quota.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-resource-quota
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: Custom
+    policy.open-cluster-management.io/categories: Resource Management
+    policy.open-cluster-management.io/controls: Quota-1
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: policy-resource-quota
+        spec:
+          remediationAction: enforce
+          severity: medium
+          namespaceSelector:
+            include:
+              - development
+              - testing
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ResourceQuota
+                metadata:
+                  name: compute-quota
+                spec:
+                  hard:
+                    requests.cpu: "4"
+                    requests.memory: 8Gi
+                    limits.cpu: "8"
+                    limits.memory: 16Gi
+                    persistentvolumeclaims: "10"
+EOF
+Subtask 2.3: Network Policy Configuration
+Create a network security policy:
+cat > policy-network-security.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-network-security
+  namespace: default
+  annotations:
+    policy.open-cluster-management.io/standards: NIST-CSF
+    policy.open-cluster-management.io/categories: PR.AC Network Security
+    policy.open-cluster-management.io/controls: PR.AC-5
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: policy-network-security
+        spec:
+          remediationAction: inform
+          severity: high
+          namespaceSelector:
+            include:
+              - production
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: deny-all-ingress
+                spec:
+                  podSelector: {}
+                  policyTypes:
+                  - Ingress
+EOF
+Task 3: Create YAML Files for Placement Rules
+Subtask 3.1: Basic Placement Rule Configuration
+Create a development environment placement rule:
+cat > placement-rule-dev.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-dev-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: development
+  clusterReplicas: 2
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+EOF
+Create a production placement rule with advanced criteria:
+cat > placement-rule-prod.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-prod-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      security-level: high
+    matchExpressions:
+      - key: region
+        operator: In
+        values:
+          - us-west-2
+          - us-east-1
+  clusterReplicas: 1
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  schedulerName: default-scheduler
+EOF
+Subtask 3.2: Advanced Placement Configuration
+Create a placement rule with resource requirements:
+cat > placement-rule-resources.yaml << 'EOF'
+apiVersion: apps.open-cluster-management.io/v1
+kind: PlacementRule
+metadata:
+  name: placement-high-resource-clusters
+  namespace: default
+spec:
+  clusterSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/worker
+        operator: Exists
+      - key: cluster-resource-level
+        operator: In
+        values:
+          - high
+          - medium
+  clusterReplicas: 3
+  clusterConditions:
+    - status: "True"
+      type: ManagedClusterConditionAvailable
+  resourceHint:
+    type: cpu
+    order: largest
+EOF
+Create a placement rule using the new Placement API:
+cat > placement-new-api.yaml << 'EOF'
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-new-api-example
+  namespace: default
+spec:
+  numberOfClusters: 2
+  clusterSets:
+    - development
+    - production
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            environment: development
+        claimSelector:
+          matchLabels:
+            region.open-cluster-management.io/us-east-1: ""
+  prioritizerPolicy:
+    mode: Exact
+    configurations:
+      - scoreCoordinate:
+          type: BuiltIn
+          builtIn: ResourceAllocatableCPU
+        weight: 1
+EOF
+Task 4: Apply and Test YAML Configurations
+Subtask 4.1: Applying Cluster Configurations
+Verify connection to the RHACM hub cluster:
+oc whoami
+oc cluster-info
+Apply cluster namespace configurations:
+oc apply -f cluster-namespace-dev.yaml
+oc apply -f cluster-namespace-prod.yaml
+Apply cluster set configurations:
+oc apply -f clusterset-development.yaml
+oc apply -f clusterset-production.yaml
+Apply managed cluster configurations:
+oc apply -f managed-cluster-dev.yaml
+oc apply -f managed-cluster-prod.yaml
+Verify cluster creation:
+oc get managedclusters
+oc get managedclustersets
+oc describe managedcluster dev-cluster-01
+Subtask 4.2: Applying Policy Configurations
+Apply security policies:
+oc apply -f policy-namespace-security.yaml
+oc apply -f policy-pod-security.yaml
+oc apply -f policy-network-security.yaml
+Apply resource management policy:
+oc apply -f policy-resource-quota.yaml
+Verify policy creation and status:
+oc get policies
+oc describe policy policy-namespace-security
+oc get policy policy-namespace-security -o yaml
+Subtask 4.3: Applying Placement Rules
+Apply placement rule configurations:
+oc apply -f placement-rule-dev.yaml
+oc apply -f placement-rule-prod.yaml
+oc apply -f placement-rule-resources.yaml
+oc apply -f placement-new-api.yaml
+Verify placement rule creation:
+oc get placementrules
+oc get placements
+oc describe placementrule placement-dev-clusters
+Subtask 4.4: Testing Configuration Integration
+Create a policy set that uses placement rules:
+cat > policyset-security.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: security-policyset
+  namespace: default
+spec:
+  description: Security policies for managed clusters
+  policies:
+    - policy-namespace-security
+    - policy-pod-security-standards
+    - policy-network-security
+EOF
+Apply the policy set:
+oc apply -f policyset-security.yaml
+Create placement bindings to connect policies with placement rules:
+cat > placement-binding-dev.yaml << 'EOF'
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-dev-security
+  namespace: default
+placementRef:
+  name: placement-dev-clusters
+  kind: PlacementRule
+  apiGroup: apps.open-cluster-management.io
+subjects:
+- name: policy-namespace-security
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
+- name: policy-resource-quota
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
+EOF
+Apply placement binding:
+oc apply -f placement-binding-dev.yaml
+Subtask 4.5: Validation and Testing
+Check policy compliance status:
+oc get policies -o wide
+oc get policy policy-namespace-security -o jsonpath='{.status.compliant}'
+View detailed policy status:
+oc describe policy policy-namespace-security
+Check placement rule decisions:
+oc get placementrule placement-dev-clusters -o yaml | grep -A 10 decisions
+Verify policy propagation to managed clusters:
+oc get policies --all-namespaces | grep -v default
+Test policy remediation by creating a violation:
+# This command will show how policies respond to violations
+oc get events --field-selector reason=PolicyViolation
+Troubleshooting Common Issues
+Issue 1: YAML Syntax Errors
+Problem: Configuration fails to apply due to YAML formatting issues.
+
+Solution:
+
+# Validate YAML syntax
+python3 -c "import yaml; yaml.safe_load(open('your-file.yaml'))"
+
+# Or use yq if available
+yq eval '.' your-file.yaml
+Issue 2: Policy Not Applying to Clusters
+Problem: Policies are created but not enforced on managed clusters.
+
+Solution:
+
+# Check placement binding
+oc get placementbinding -o yaml
+
+# Verify cluster labels match placement rule selectors
+oc get managedclusters --show-labels
+
+# Check policy status
+oc describe policy policy-name
+Issue 3: Cluster Registration Issues
+Problem: Managed clusters not appearing or showing as unavailable.
+
+Solution:
+
+# Check cluster status
+oc get managedclusters -o wide
+
+# Verify cluster conditions
+oc describe managedcluster cluster-name
+
+# Check cluster agent logs (if accessible)
+oc logs -n open-cluster-management-agent deployment/klusterlet-registration-agent
+Validation Commands
+Use these commands to verify your lab completion:
+
+# Verify all resources are created
+echo "=== Managed Clusters ==="
+oc get managedclusters
+
+echo "=== Policies ==="
+oc get policies
+
+echo "=== Placement Rules ==="
+oc get placementrules
+
+echo "=== Placement Bindings ==="
+oc get placementbindings
+
+echo "=== Policy Sets ==="
+oc get policysets
+
+# Check resource details
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[0].status,LABELS:.metadata.labels
+Conclusion
+In this comprehensive lab, you have successfully:
+
+• Created YAML definitions for managed clusters with different configurations for development and production environments • Developed policy configurations covering security, resource management, and network policies using YAML syntax • Implemented placement rules to control where policies and applications are deployed across your cluster fleet • Applied configurations using the OpenShift CLI and validated their successful deployment • Tested integration between policies, placement rules, and managed clusters • Learned troubleshooting techniques for common YAML configuration issues in RHACM
+
+Why This Matters: YAML-based configuration management is essential for implementing Infrastructure as Code (IaC) practices in multi-cluster environments. This approach provides version control, repeatability, and scalability for managing complex cluster fleets. The skills you've developed enable you to:
+
+Maintain consistent configurations across multiple clusters
+Implement policy-driven governance at scale
+Automate cluster management tasks
+Ensure compliance and security standards across your infrastructure
+Prepare for the Red Hat Certified Specialist in Multi Cluster Management exam
+These YAML configuration skills form the foundation for advanced RHACM operations and are crucial for managing enterprise-scale OpenShift deployments effectively.
