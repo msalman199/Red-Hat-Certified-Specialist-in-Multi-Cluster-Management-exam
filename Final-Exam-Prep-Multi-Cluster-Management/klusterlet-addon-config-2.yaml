@@ -1,0 +1,19 @@
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: managed-cluster-2
+  namespace: managed-cluster-2
+spec:
+  clusterName: managed-cluster-2
+  clusterNamespace: managed-cluster-2
+  clusterLabels:
+    environment: development
+    region: us-west
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true

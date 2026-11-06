@@ -1,0 +1,9 @@
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: managed-cluster-2
+  labels:
+    environment: development
+    region: us-west
+spec:
+  hubAcceptsClient: true

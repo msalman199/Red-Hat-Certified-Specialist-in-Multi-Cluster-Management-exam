@@ -1,0 +1,557 @@
+Lab 20: Final Exam Prep: Multi-Cluster Management
+Objectives
+By the end of this lab, students will be able to:
+
+Set up and configure multiple OpenShift clusters using Red Hat Advanced Cluster Management (RHACM)
+Implement and manage governance policies across multiple clusters
+Deploy applications to multiple clusters simultaneously
+Monitor cluster health and performance metrics
+Troubleshoot common multi-cluster management issues
+Validate configurations and ensure compliance across clusters
+Demonstrate proficiency in multi-cluster scenarios for EX480 exam preparation
+Prerequisites
+Before starting this lab, students should have:
+
+Basic understanding of Kubernetes and OpenShift concepts
+Familiarity with YAML configuration files
+Knowledge of command-line interface operations
+Understanding of container orchestration principles
+Previous experience with OpenShift cluster administration
+Basic networking concepts knowledge
+Lab Environment Setup
+Ready-to-Use Cloud Machines: Al Nafi provides pre-configured Linux-based cloud machines for this lab. Simply click Start Lab to access your environment - no need to build your own VM or install additional software.
+
+Your lab environment includes:
+
+Hub cluster (RHACM management cluster)
+Two managed clusters (spoke clusters)
+Pre-installed OpenShift CLI tools
+Access to web consoles for all clusters
+Task 1: Set Up Multiple Clusters Using RHACM
+Subtask 1.1: Access and Verify Hub Cluster
+Connect to your lab environment
+
+# Verify you can access the hub cluster
+oc login --server=https://api.hub-cluster.example.com:6443 --username=admin --password=admin123
+
+# Check cluster status
+oc get nodes
+oc get pods -n open-cluster-management
+Verify RHACM installation
+
+# Check if RHACM operator is installed
+oc get csv -n open-cluster-management
+
+# Verify MultiClusterHub resource
+oc get multiclusterhub -n open-cluster-management
+Subtask 1.2: Import Managed Clusters
+Create namespace for cluster management
+
+# Create namespace for managed cluster 1
+oc create namespace managed-cluster-1
+
+# Create namespace for managed cluster 2
+oc create namespace managed-cluster-2
+Create ManagedCluster resources
+
+Create file managed-cluster-1.yaml:
+
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: managed-cluster-1
+  labels:
+    environment: production
+    region: us-east
+spec:
+  hubAcceptsClient: true
+Create file managed-cluster-2.yaml:
+
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: managed-cluster-2
+  labels:
+    environment: development
+    region: us-west
+spec:
+  hubAcceptsClient: true
+Apply the ManagedCluster resources
+
+oc apply -f managed-cluster-1.yaml
+oc apply -f managed-cluster-2.yaml
+
+# Verify clusters are created
+oc get managedclusters
+Subtask 1.3: Generate Import Commands
+Create KlusterletAddonConfig for each cluster
+
+Create file klusterlet-addon-config-1.yaml:
+
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: managed-cluster-1
+  namespace: managed-cluster-1
+spec:
+  clusterName: managed-cluster-1
+  clusterNamespace: managed-cluster-1
+  clusterLabels:
+    environment: production
+    region: us-east
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+Create file klusterlet-addon-config-2.yaml:
+
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: managed-cluster-2
+  namespace: managed-cluster-2
+spec:
+  clusterName: managed-cluster-2
+  clusterNamespace: managed-cluster-2
+  clusterLabels:
+    environment: development
+    region: us-west
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+Apply the configurations
+
+oc apply -f klusterlet-addon-config-1.yaml
+oc apply -f klusterlet-addon-config-2.yaml
+Generate import commands
+
+# Get import command for managed-cluster-1
+oc get secret managed-cluster-1-import -n managed-cluster-1 -o jsonpath='{.data.import\.yaml}' | base64 --decode > import-cluster-1.yaml
+
+# Get import command for managed-cluster-2
+oc get secret managed-cluster-2-import -n managed-cluster-2 -o jsonpath='{.data.import\.yaml}' | base64 --decode > import-cluster-2.yaml
+Subtask 1.4: Import Clusters (Simulated)
+Since this is a lab environment, we'll simulate the import process:
+
+Verify cluster import status
+
+# Check if clusters are available
+oc get managedclusters
+
+# Check cluster status
+oc get managedclusterinfo -A
+Label clusters for easier management
+
+# Add additional labels
+oc label managedcluster managed-cluster-1 cluster-type=production
+oc label managedcluster managed-cluster-2 cluster-type=development
+Task 2: Implement Policies
+Subtask 2.1: Create Security Policies
+Create a namespace policy
+
+Create file namespace-policy.yaml: `yaml apiVersion: policy.open-cluster-management.io/v1 kind: Policy metadata: name: policy-namespace namespace: default spec: remediationAction: enforce disabled: false policy-templates: - objectDefinition: apiVersion: policy.open-cluster-management.io/v1 kind: ConfigurationPolicy metadata: name: policy-namespace-prod spec: remediationAction: enforce severity: low namespaceSelector: exclude: - kube-* include: - default object-templates: - complianceType: musthave objectDefinition: kind: Namespace apiVersion: v1 metadata: name: production-apps labels: environment: production
+apiVersion: policy.open-cluster-management.io/v1 kind: PlacementBinding metadata: name: binding-policy-namespace namespace: default placementRef: name: placement-policy-namespace kind: PlacementRule apiGroup: apps.open-cluster-management.io subjects: - name: policy-namespace kind: Policy apiGroup: policy.open-cluster-management.io
+apiVersion: apps.open-cluster-management.io/v1 kind: PlacementRule metadata: name: placement-policy-namespace namespace: default spec: clusterConditions: - status: "True" type: ManagedClusterConditionAvailable clusterSelector: matchExpressions: - key: environment operator: In values: - production
+
+
+Apply the namespace policy
+
+oc apply -f namespace-policy.yaml
+
+# Verify policy creation
+oc get policy -A
+oc get placementbinding -A
+oc get placementrule -A
+Subtask 2.2: Create Network Security Policy
+Create network policy for pod communication
+
+Create file network-policy.yaml: `yaml apiVersion: policy.open-cluster-management.io/v1 kind: Policy metadata: name: policy-networkpolicy namespace: default spec: remediationAction: enforce disabled: false policy-templates: - objectDefinition: apiVersion: policy.open-cluster-management.io/v1 kind: ConfigurationPolicy metadata: name: policy-networkpolicy-deny-all spec: remediationAction: enforce severity: medium namespaceSelector: exclude: - kube-* - open-cluster-management* include: - production-apps object-templates: - complianceType: musthave objectDefinition: apiVersion: networking.k8s.io/v1 kind: NetworkPolicy metadata: name: deny-all-ingress namespace: production-apps spec: podSelector: {} policyTypes: - Ingress
+apiVersion: policy.open-cluster-management.io/v1 kind: PlacementBinding metadata: name: binding-policy-networkpolicy namespace: default placementRef: name: placement-policy-networkpolicy kind: PlacementRule apiGroup: apps.open-cluster-management.io subjects: - name: policy-networkpolicy kind: Policy apiGroup: policy.open-cluster-management.io
+apiVersion: apps.open-cluster-management.io/v1 kind: PlacementRule metadata: name: placement-policy-networkpolicy namespace: default spec: clusterConditions: - status: "True" type: ManagedClusterConditionAvailable clusterSelector: matchExpressions: - key: environment operator: In values: - production
+
+
+Apply the network policy
+
+oc apply -f network-policy.yaml
+
+# Check policy status
+oc get policy policy-networkpolicy -o yaml
+Subtask 2.3: Create Resource Quota Policy
+Create resource quota policy
+
+Create file resource-quota-policy.yaml: `yaml apiVersion: policy.open-cluster-management.io/v1 kind: Policy metadata: name: policy-resourcequota namespace: default spec: remediationAction: enforce disabled: false policy-templates: - objectDefinition: apiVersion: policy.open-cluster-management.io/v1 kind: ConfigurationPolicy metadata: name: policy-resourcequota-example spec: remediationAction: enforce severity: medium namespaceSelector: exclude: - kube-* include: - production-apps object-templates: - complianceType: musthave objectDefinition: apiVersion: v1 kind: ResourceQuota metadata: name: production-quota namespace: production-apps spec: hard: requests.cpu: "4" requests.memory: 8Gi limits.cpu: "8" limits.memory: 16Gi pods: "10"
+apiVersion: policy.open-cluster-management.io/v1 kind: PlacementBinding metadata: name: binding-policy-resourcequota namespace: default placementRef: name: placement-policy-resourcequota kind: PlacementRule apiGroup: apps.open-cluster-management.io subjects: - name: policy-resourcequota kind: Policy apiGroup: policy.open-cluster-management.io
+apiVersion: apps.open-cluster-management.io/v1 kind: PlacementRule metadata: name: placement-policy-resourcequota namespace: default spec: clusterConditions: - status: "True" type: ManagedClusterConditionAvailable clusterSelector: matchExpressions: - key: environment operator: In values: - production
+
+
+Apply the resource quota policy
+
+oc apply -f resource-quota-policy.yaml
+
+# Verify all policies
+oc get policies
+Task 3: Monitor Health and Deploy Applications Across Clusters
+Subtask 3.1: Monitor Cluster Health
+Check cluster status and health
+
+# View all managed clusters
+oc get managedclusters
+
+# Get detailed cluster information
+oc describe managedcluster managed-cluster-1
+oc describe managedcluster managed-cluster-2
+
+# Check cluster conditions
+oc get managedcluster managed-cluster-1 -o jsonpath='{.status.conditions}' | jq .
+Monitor policy compliance
+
+# Check policy compliance status
+oc get policies -o wide
+
+# Get detailed compliance information
+oc get policy policy-namespace -o jsonpath='{.status.compliant}'
+oc get policy policy-networkpolicy -o jsonpath='{.status.compliant}'
+oc get policy policy-resourcequota -o jsonpath='{.status.compliant}'
+Create a monitoring script
+
+Create file monitor-clusters.sh:
+
+#!/bin/bash
+
+echo "=== Multi-Cluster Health Monitor ==="
+echo "Date: $(date)"
+echo ""
+
+echo "=== Managed Clusters Status ==="
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status
+echo ""
+
+echo "=== Policy Compliance Status ==="
+oc get policies -o custom-columns=NAME:.metadata.name,COMPLIANT:.status.compliant
+echo ""
+
+echo "=== Cluster Resource Usage ==="
+for cluster in managed-cluster-1 managed-cluster-2; do
+    echo "Cluster: $cluster"
+    oc get managedclusterinfo $cluster -n $cluster -o jsonpath='{.status.nodeList[*].capacity}' 2>/dev/null || echo "  Info not available"
+    echo ""
+done
+Make the script executable and run it
+
+chmod +x monitor-clusters.sh
+./monitor-clusters.sh
+Subtask 3.2: Deploy Applications Across Clusters
+Create an application for multi-cluster deployment
+
+Create file sample-app.yaml: `yaml apiVersion: app.k8s.io/v1beta1 kind: Application metadata: name: sample-web-app namespace: default spec: componentKinds: - group: apps.open-cluster-management.io kind: Subscription descriptor: {} selector: matchExpressions: - key: app operator: In values: - sample-web-app
+apiVersion: apps.open-cluster-management.io/v1 kind: Channel metadata: name: sample-app-channel namespace: default spec: type: Namespace pathname: default
+apiVersion: apps.open-cluster-management.io/v1 kind: Subscription metadata: name: sample-app-subscription namespace: default labels: app: sample-web-app spec: channel: default/sample-app-channel placement: placementRef: name: sample-app-placement kind: PlacementRule
+apiVersion: apps.open-cluster-management.io/v1 kind: PlacementRule metadata: name: sample-app-placement namespace: default spec: clusterConditions: - status: "True" type: ManagedClusterConditionAvailable clusterSelector: matchExpressions: - key: environment operator: In values: - production - development
+
+
+Create the deployable resource
+
+Create file sample-deployment.yaml: `yaml apiVersion: apps.open-cluster-management.io/v1 kind: Deployable metadata: name: sample-web-deployment namespace: default labels: app: sample-web-app spec: template: apiVersion: apps/v1 kind: Deployment metadata: name: sample-web-app namespace: production-apps spec: replicas: 2 selector: matchLabels: app: sample-web-app template: metadata: labels: app: sample-web-app spec: containers: - name: web-server image: nginx:1.20 ports: - containerPort: 80 resources: requests: cpu: 100m memory: 128Mi limits: cpu: 200m memory: 256Mi
+apiVersion: apps.open-cluster-management.io/v1 kind: Deployable metadata: name: sample-web-service namespace: default labels: app: sample-web-app spec: template: apiVersion: v1 kind: Service metadata: name: sample-web-service namespace: production-apps spec: selector: app: sample-web-app ports: - port: 80 targetPort: 80 type: ClusterIP
+
+
+Deploy the application
+
+# Apply the application resources
+oc apply -f sample-app.yaml
+oc apply -f sample-deployment.yaml
+
+# Verify application deployment
+oc get application
+oc get subscription
+oc get placementrule
+oc get deployable
+Subtask 3.3: Verify Application Deployment
+Check application status
+
+# Check subscription status
+oc get subscription sample-app-subscription -o yaml
+
+# Check placement decisions
+oc get placementrule sample-app-placement -o yaml
+Verify deployment on managed clusters
+
+# Check if deployables are propagated
+oc get deployable -A
+
+# Check application pods (simulated - in real environment you'd check on managed clusters)
+echo "Checking application deployment status..."
+oc get subscription sample-app-subscription -o jsonpath='{.status.statuses}' | jq .
+Task 4: Troubleshoot and Validate Configurations
+Subtask 4.1: Common Troubleshooting Scenarios
+Troubleshoot policy compliance issues
+
+# Check for non-compliant policies
+oc get policies --field-selector=status.compliant!=Compliant
+
+# Get detailed policy status
+oc describe policy policy-namespace
+
+# Check policy events
+oc get events --field-selector=involvedObject.kind=Policy
+Troubleshoot cluster connectivity
+
+# Check managed cluster agent status
+oc get pods -n open-cluster-management-agent -A
+
+# Check klusterlet status on managed clusters
+oc get klusterlet -A
+
+# Verify cluster import status
+oc get managedcluster -o custom-columns=NAME:.metadata.name,JOINED:.status.conditions[?(@.type==\"ManagedClusterJoined\")].status,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status
+Create a troubleshooting script
+
+Create file troubleshoot.sh:
+
+#!/bin/bash
+
+echo "=== RHACM Troubleshooting Script ==="
+echo "Date: $(date)"
+echo ""
+
+echo "=== Hub Cluster Status ==="
+oc get multiclusterhub -n open-cluster-management
+echo ""
+
+echo "=== Managed Clusters Status ==="
+oc get managedclusters
+echo ""
+
+echo "=== Non-Compliant Policies ==="
+oc get policies --field-selector=status.compliant!=Compliant 2>/dev/null || echo "All policies are compliant"
+echo ""
+
+echo "=== Application Status ==="
+oc get applications
+oc get subscriptions
+echo ""
+
+echo "=== Recent Events ==="
+oc get events --sort-by='.lastTimestamp' | tail -10
+echo ""
+
+echo "=== Resource Usage ==="
+oc top nodes 2>/dev/null || echo "Metrics not available"
+Run the troubleshooting script
+
+chmod +x troubleshoot.sh
+./troubleshoot.sh
+Subtask 4.2: Validate Policy Enforcement
+Test namespace policy enforcement
+
+# Try to create a resource in production-apps namespace on hub cluster (for testing)
+oc create namespace test-validation
+
+# Check if the production-apps namespace was created by policy
+oc get namespace production-apps
+
+# Verify namespace labels
+oc get namespace production-apps -o yaml | grep -A 5 labels
+Test resource quota enforcement
+
+# Check if resource quota was applied
+oc get resourcequota -n production-apps
+
+# Describe the resource quota
+oc describe resourcequota production-quota -n production-apps
+Test network policy enforcement
+
+# Check if network policy was created
+oc get networkpolicy -n production-apps
+
+# Describe the network policy
+oc describe networkpolicy deny-all-ingress -n production-apps
+Subtask 4.3: Performance and Compliance Validation
+Create a validation script
+
+Create file validate-setup.sh:
+
+#!/bin/bash
+
+echo "=== Multi-Cluster Setup Validation ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to check if resource exists
+check_resource() {
+    local resource_type=$1
+    local resource_name=$2
+    local namespace=${3:-"default"}
+    
+    if oc get $resource_type $resource_name -n $namespace &>/dev/null; then
+        echo "✓ $resource_type/$resource_name exists in namespace $namespace"
+        return 0
+    else
+        echo "✗ $resource_type/$resource_name NOT found in namespace $namespace"
+        return 1
+    fi
+}
+
+echo "=== Checking Managed Clusters ==="
+check_resource managedcluster managed-cluster-1
+check_resource managedcluster managed-cluster-2
+echo ""
+
+echo "=== Checking Policies ==="
+check_resource policy policy-namespace
+check_resource policy policy-networkpolicy
+check_resource policy policy-resourcequota
+echo ""
+
+echo "=== Checking Applications ==="
+check_resource application sample-web-app
+check_resource subscription sample-app-subscription
+check_resource placementrule sample-app-placement
+echo ""
+
+echo "=== Checking Policy Compliance ==="
+for policy in policy-namespace policy-networkpolicy policy-resourcequota; do
+    compliance=$(oc get policy $policy -o jsonpath='{.status.compliant}' 2>/dev/null)
+    if [ "$compliance" = "Compliant" ]; then
+        echo "✓ $policy is compliant"
+    else
+        echo "✗ $policy is not compliant (status: $compliance)"
+    fi
+done
+echo ""
+
+echo "=== Checking Cluster Conditions ==="
+for cluster in managed-cluster-1 managed-cluster-2; do
+    available=$(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null)
+    joined=$(oc get managedcluster $cluster -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}' 2>/dev/null)
+    
+    if [ "$available" = "True" ] && [ "$joined" = "True" ]; then
+        echo "✓ $cluster is available and joined"
+    else
+        echo "✗ $cluster status - Available: $available, Joined: $joined"
+    fi
+done
+
+echo ""
+echo "=== Validation Complete ==="
+Run the validation script
+
+chmod +x validate-setup.sh
+./validate-setup.sh
+Subtask 4.4: Generate Compliance Report
+Create a comprehensive compliance report
+
+Create file compliance-report.sh:
+
+#!/bin/bash
+
+REPORT_FILE="compliance-report-$(date +%Y%m%d-%H%M%S).txt"
+
+echo "=== RHACM Multi-Cluster Compliance Report ===" > $REPORT_FILE
+echo "Generated: $(date)" >> $REPORT_FILE
+echo "Operator: $(oc whoami)" >> $REPORT_FILE
+echo "" >> $REPORT_FILE
+
+echo "=== Cluster Overview ===" >> $REPORT_FILE
+oc get managedclusters -o wide >> $REPORT_FILE
+echo "" >> $REPORT_FILE
+
+echo "=== Policy Compliance Summary ===" >> $REPORT_FILE
+oc get policies -o custom-columns=NAME:.metadata.name,COMPLIANT:.status.compliant,PLACEMENT:.spec.placement >> $REPORT_FILE
+echo "" >> $REPORT_FILE
+
+echo "=== Application Deployment Status ===" >> $REPORT_FILE
+oc get applications -o wide >> $REPORT_FILE
+oc get subscriptions -o wide >> $REPORT_FILE
+echo "" >> $REPORT_FILE
+
+echo "=== Detailed Policy Status ===" >> $REPORT_FILE
+for policy in $(oc get policies -o jsonpath='{.items[*].metadata.name}'); do
+    echo "--- Policy: $policy ---" >> $REPORT_FILE
+    oc describe policy $policy >> $REPORT_FILE
+    echo "" >> $REPORT_FILE
+done
+
+echo "Report generated: $REPORT_FILE"
+echo "First 20 lines of report:"
+head -20 $REPORT_FILE
+Generate the compliance report
+
+chmod +x compliance-report.sh
+./compliance-report.sh
+Advanced Troubleshooting Tips
+Common Issues and Solutions
+Policy Not Compliant
+
+Check placement rules and cluster selectors
+Verify cluster labels match placement criteria
+Review policy template syntax
+Check cluster connectivity
+Application Not Deploying
+
+Verify subscription and channel configuration
+Check placement rule cluster selection
+Ensure target namespace exists
+Review resource quotas and limits
+Cluster Import Failures
+
+Verify network connectivity between clusters
+Check certificate validity
+Ensure proper RBAC permissions
+Review klusterlet agent logs
+Performance Issues
+
+Monitor resource usage on hub cluster
+Check managed cluster agent resource consumption
+Review policy evaluation frequency
+Optimize placement rules
+Useful Commands for Exam Preparation
+# Quick cluster status check
+oc get managedclusters -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[?(@.type==\"ManagedClusterConditionAvailable\")].status
+
+# Policy compliance overview
+oc get policies -o custom-columns=NAME:.metadata.name,COMPLIANT:.status.compliant
+
+# Application deployment status
+oc get subscriptions -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,CLUSTERS:.status.statuses
+
+# Resource usage monitoring
+oc get managedclusterinfo -A -o custom-columns=CLUSTER:.metadata.name,CPU:.status.nodeList[0].capacity.cpu,MEMORY:.status.nodeList[0].capacity.memory
+
+# Event monitoring
+oc get events --sort-by='.lastTimestamp' --field-selector=type!=Normal
+Conclusion
+In this comprehensive lab, you have successfully:
+
+Set up a multi-cluster environment using Red Hat Advanced Cluster Management, demonstrating the ability to manage multiple OpenShift clusters from a central hub
+Implemented governance policies across clusters, including namespace creation, network security, and resource quotas, ensuring consistent security and compliance
+Deployed applications to multiple clusters simultaneously using RHACM's application lifecycle management capabilities
+Monitored cluster health and application deployment status using various CLI commands and custom scripts
+Troubleshot common issues and validated configurations using systematic approaches and automated scripts
+Generated compliance reports to demonstrate policy adherence across the multi-cluster environment
+This lab has prepared you for the EX480 Red Hat Certified Specialist in Multi Cluster Management exam by providing hands-on experience with:
+
+Multi-cluster setup and configuration
+Policy creation and enforcement
+Application lifecycle management
+Monitoring and troubleshooting
+Compliance validation and reporting
+The skills demonstrated in this lab are essential for managing enterprise-scale OpenShift deployments across multiple clusters, ensuring security, compliance, and operational efficiency. These capabilities are crucial for organizations implementing hybrid and multi-cloud strategies with consistent governance and application deployment practices.
+
+Key Takeaways:
+
+RHACM provides centralized management for multiple OpenShift clusters
+Policies ensure consistent security and compliance across clusters
+Application deployment can be automated and managed centrally
+Monitoring and troubleshooting require systematic approaches
+Validation and reporting are essential for maintaining compliance
+Continue practicing these scenarios and exploring additional RHACM features to further enhance your multi-cluster management expertise.

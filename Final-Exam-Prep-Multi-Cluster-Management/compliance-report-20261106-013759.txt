@@ -1,0 +1,11 @@
+=== RHACM Multi-Cluster Compliance Report ===
+Generated: Fri Nov  6 01:37:59 UTC 2026
+Operator: salman-redhat
+
+=== Cluster Overview ===
+
+=== Policy Compliance Summary ===
+
+=== Application Deployment Status ===
+
+=== Detailed Policy Status ===
